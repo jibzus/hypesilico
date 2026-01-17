@@ -42,14 +42,21 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
 /// Configure SQLite pragmas for optimal performance and reliability.
 async fn configure_pragmas(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    use sqlx::Row;
+
     info!("Configuring SQLite pragmas...");
 
     sqlx::query("PRAGMA foreign_keys = ON")
         .execute(pool)
         .await?;
-    sqlx::query("PRAGMA journal_mode = WAL")
-        .execute(pool)
+
+    // journal_mode returns the actual mode set; must use fetch to get result
+    let row = sqlx::query("PRAGMA journal_mode = WAL")
+        .fetch_one(pool)
         .await?;
+    let journal_mode: String = row.get(0);
+    info!("SQLite journal_mode set to: {}", journal_mode);
+
     sqlx::query("PRAGMA busy_timeout = 5000")
         .execute(pool)
         .await?;

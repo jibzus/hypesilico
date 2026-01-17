@@ -113,7 +113,7 @@ impl PositionTracker {
         self.state.lifecycle_id = Some(lifecycle_id);
 
         self.effects.push(Effect {
-            fill_key: fill.fill_key(),
+            fill_key: fill.fill_key().to_string(),
             lifecycle_id,
             effect_type: EffectType::Open,
             qty: fill.sz,
@@ -143,7 +143,7 @@ impl PositionTracker {
         }
 
         self.effects.push(Effect {
-            fill_key: fill.fill_key(),
+            fill_key: fill.fill_key().to_string(),
             lifecycle_id,
             effect_type: EffectType::Close,
             qty: fill.sz,
@@ -188,7 +188,7 @@ impl PositionTracker {
         }
 
         self.effects.push(Effect {
-            fill_key: fill.fill_key(),
+            fill_key: fill.fill_key().to_string(),
             lifecycle_id: old_lifecycle_id,
             effect_type: EffectType::Close,
             qty: close_qty,
@@ -217,7 +217,7 @@ impl PositionTracker {
         });
 
         self.effects.push(Effect {
-            fill_key: fill.fill_key(),
+            fill_key: fill.fill_key().to_string(),
             lifecycle_id: new_lifecycle_id,
             effect_type: EffectType::Open,
             qty: open_qty,
@@ -255,7 +255,7 @@ impl PositionTracker {
             self.state.avg_entry_px = (old_value + new_value) / new_abs;
 
             self.effects.push(Effect {
-                fill_key: fill.fill_key(),
+                fill_key: fill.fill_key().to_string(),
                 lifecycle_id,
                 effect_type: EffectType::Open,
                 qty: fill.sz,
@@ -265,7 +265,7 @@ impl PositionTracker {
             });
         } else {
             self.effects.push(Effect {
-                fill_key: fill.fill_key(),
+                fill_key: fill.fill_key().to_string(),
                 lifecycle_id,
                 effect_type: EffectType::Close,
                 qty: fill.sz,

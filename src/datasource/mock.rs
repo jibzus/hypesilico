@@ -1,7 +1,7 @@
 //! Mock data source for testing without network calls.
 
 use super::{DataSource, DataSourceError, Deposit};
-use crate::domain::{Address, Coin, Decimal, Fill, TimeMs};
+use crate::domain::{Address, Decimal, Fill, TimeMs};
 use async_trait::async_trait;
 
 /// Mock data source that returns predefined test data.
@@ -69,7 +69,6 @@ impl DataSource for MockDataSource {
         to_ms: i64,
     ) -> Result<Vec<Fill>, DataSourceError> {
         let user_addr = Address::new(user.to_string());
-        let coin_obj = Coin::new(coin.to_string());
         let from_time = TimeMs::new(from_ms);
         let to_time = TimeMs::new(to_ms);
 
@@ -78,7 +77,7 @@ impl DataSource for MockDataSource {
             .iter()
             .filter(|f| {
                 f.user == user_addr
-                    && f.coin == coin_obj
+                    && (coin.is_empty() || f.coin.as_str() == coin)
                     && f.time_ms >= from_time
                     && f.time_ms <= to_time
             })
@@ -118,23 +117,25 @@ mod tests {
     use super::*;
     use crate::domain::Side;
 
+    fn make_test_fill() -> Fill {
+        Fill::new(
+            TimeMs::new(1000),
+            Address::new("0x123".to_string()),
+            Coin::new("BTC".to_string()),
+            Side::Buy,
+            Decimal::from_str_canonical("50000").unwrap(),
+            Decimal::from_str_canonical("1").unwrap(),
+            Decimal::from_str_canonical("10").unwrap(),
+            Decimal::from_str_canonical("0").unwrap(),
+            None,
+            Some(1),
+            None,
+        )
+    }
+
     #[tokio::test]
     async fn test_mock_datasource_fetch_fills() {
-        let fill = Fill {
-            user: Address::new("0x123".to_string()),
-            coin: Coin::new("BTC".to_string()),
-            time_ms: TimeMs::new(1000),
-            side: Side::Buy,
-            px: Decimal::from_str_canonical("50000").unwrap(),
-            sz: Decimal::from_str_canonical("1").unwrap(),
-            fee: Decimal::from_str_canonical("10").unwrap(),
-            closed_pnl: Decimal::from_str_canonical("0").unwrap(),
-            builder_fee: None,
-            tid: Some(1),
-            oid: None,
-            attribution: None,
-        };
-
+        let fill = make_test_fill();
         let mock = MockDataSource::new().with_fill(fill.clone());
         let fills = mock.fetch_fills("0x123", "BTC", 0, 2000).await.unwrap();
         assert_eq!(fills.len(), 1);
@@ -143,21 +144,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mock_datasource_fetch_fills_filtered() {
-        let fill = Fill {
-            user: Address::new("0x123".to_string()),
-            coin: Coin::new("BTC".to_string()),
-            time_ms: TimeMs::new(1000),
-            side: Side::Buy,
-            px: Decimal::from_str_canonical("50000").unwrap(),
-            sz: Decimal::from_str_canonical("1").unwrap(),
-            fee: Decimal::from_str_canonical("10").unwrap(),
-            closed_pnl: Decimal::from_str_canonical("0").unwrap(),
-            builder_fee: None,
-            tid: Some(1),
-            oid: None,
-            attribution: None,
-        };
-
+        let fill = make_test_fill();
         let mock = MockDataSource::new().with_fill(fill);
         let fills = mock.fetch_fills("0x123", "ETH", 0, 2000).await.unwrap();
         assert_eq!(fills.len(), 0);

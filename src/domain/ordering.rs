@@ -25,7 +25,7 @@ impl FillOrderingKey {
             time_ms: fill.time_ms.as_i64(),
             tid: fill.tid,
             oid: fill.oid,
-            fill_key: fill.fill_key(),
+            fill_key: fill.fill_key().to_string(),
         }
     }
 

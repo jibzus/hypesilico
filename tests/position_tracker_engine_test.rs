@@ -105,7 +105,7 @@ fn test_flip_long_to_short_emits_two_effects_and_snapshots() {
 
     let flip_effects: Vec<_> = effects
         .iter()
-        .filter(|e| e.fill_key == "tid:2")
+        .filter(|e| e.fill_key == "0x123:BTC:tid:2")
         .collect();
     assert_eq!(flip_effects.len(), 2);
     assert_eq!(flip_effects[0].effect_type, EffectType::Close);

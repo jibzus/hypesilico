@@ -16,12 +16,12 @@ impl Repository {
         Repository { pool }
     }
 
-    /// Insert a raw fill into the database.
+    /// Insert a fill into the database idempotently.
     ///
     /// # Errors
-    /// Returns an error if the insert fails (e.g., duplicate fill_key).
-    pub async fn insert_raw_fill(&self, fill: &Fill, fill_key: &str) -> Result<(), sqlx::Error> {
-        sqlx::query(
+    /// Returns an error if the insert fails.
+    pub async fn insert_fill(&self, fill: &Fill) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
             r#"
             INSERT INTO raw_fills (
                 user, coin, time_ms, side, px, sz, fee, closed_pnl,
@@ -41,12 +41,64 @@ impl Repository {
         .bind(fill.builder_fee.map(|d| d.to_canonical_string()))
         .bind(fill.tid)
         .bind(fill.oid)
-        .bind(fill_key)
+        .bind(fill.fill_key.as_str())
         .bind(chrono::Utc::now().timestamp_millis())
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Insert multiple fills in a single transaction for better performance.
+    ///
+    /// Returns the number of newly inserted fills (excludes duplicates).
+    ///
+    /// # Errors
+    /// Returns an error if the transaction fails.
+    pub async fn insert_fills_batch(&self, fills: &[Fill]) -> Result<usize, sqlx::Error> {
+        if fills.is_empty() {
+            return Ok(0);
+        }
+
+        let created_at = chrono::Utc::now().timestamp_millis();
+        let mut total_inserted = 0usize;
+
+        // Use a transaction for atomicity and better performance
+        let mut tx = self.pool.begin().await?;
+
+        for fill in fills {
+            let result = sqlx::query(
+                r#"
+                INSERT INTO raw_fills (
+                    user, coin, time_ms, side, px, sz, fee, closed_pnl,
+                    builder_fee, tid, oid, fill_key, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(fill_key) DO NOTHING
+                "#,
+            )
+            .bind(fill.user.as_str())
+            .bind(fill.coin.as_str())
+            .bind(fill.time_ms.as_i64())
+            .bind(fill.side.to_string())
+            .bind(fill.px.to_canonical_string())
+            .bind(fill.sz.to_canonical_string())
+            .bind(fill.fee.to_canonical_string())
+            .bind(fill.closed_pnl.to_canonical_string())
+            .bind(fill.builder_fee.map(|d| d.to_canonical_string()))
+            .bind(fill.tid)
+            .bind(fill.oid)
+            .bind(fill.fill_key.as_str())
+            .bind(created_at)
+            .execute(&mut *tx)
+            .await?;
+
+            if result.rows_affected() > 0 {
+                total_inserted += 1;
+            }
+        }
+
+        tx.commit().await?;
+        Ok(total_inserted)
     }
 
     /// Query raw fills for a user and coin within a time range.
@@ -60,21 +112,60 @@ impl Repository {
         from_ms: i64,
         to_ms: i64,
     ) -> Result<Vec<Fill>, sqlx::Error> {
-        let rows = sqlx::query(
-            r#"
-            SELECT user, coin, time_ms, side, px, sz, fee, closed_pnl,
-                   builder_fee, tid, oid
-            FROM raw_fills
-            WHERE user = ? AND coin = ? AND time_ms >= ? AND time_ms <= ?
-            ORDER BY time_ms ASC, tid ASC, oid ASC
-            "#,
+        self.query_fills(
+            user,
+            Some(coin),
+            Some(TimeMs::new(from_ms)),
+            Some(TimeMs::new(to_ms)),
         )
-        .bind(user.as_str())
-        .bind(coin.as_str())
-        .bind(from_ms)
-        .bind(to_ms)
-        .fetch_all(&self.pool)
-        .await?;
+        .await
+    }
+
+    /// Query fills for a user with optional coin and time window.
+    ///
+    /// # Errors
+    /// Returns an error if the query fails.
+    pub async fn query_fills(
+        &self,
+        user: &Address,
+        coin: Option<&Coin>,
+        from_ms: Option<TimeMs>,
+        to_ms: Option<TimeMs>,
+    ) -> Result<Vec<Fill>, sqlx::Error> {
+        let from_ms = from_ms.unwrap_or(TimeMs::new(0)).as_ms();
+        let to_ms = to_ms.unwrap_or(TimeMs::new(i64::MAX)).as_ms();
+
+        let (sql, binds_coin) = if coin.is_some() {
+            (
+                r#"
+                SELECT user, coin, time_ms, side, px, sz, fee, closed_pnl,
+                       builder_fee, tid, oid, fill_key
+                FROM raw_fills
+                WHERE user = ? AND coin = ? AND time_ms >= ? AND time_ms <= ?
+                ORDER BY time_ms ASC, tid ASC, oid ASC, fill_key ASC
+                "#,
+                true,
+            )
+        } else {
+            (
+                r#"
+                SELECT user, coin, time_ms, side, px, sz, fee, closed_pnl,
+                       builder_fee, tid, oid, fill_key
+                FROM raw_fills
+                WHERE user = ? AND time_ms >= ? AND time_ms <= ?
+                ORDER BY time_ms ASC, tid ASC, oid ASC, fill_key ASC
+                "#,
+                false,
+            )
+        };
+
+        let mut query = sqlx::query(sql).bind(user.as_str());
+        if binds_coin {
+            query = query.bind(coin.expect("binds_coin implies coin is Some").as_str());
+        }
+        query = query.bind(from_ms).bind(to_ms);
+
+        let rows = query.fetch_all(&self.pool).await?;
 
         let fills = rows
             .iter()
@@ -91,8 +182,9 @@ impl Repository {
                 let fee_str: String = row.get("fee");
                 let closed_pnl_str: String = row.get("closed_pnl");
                 let builder_fee_opt: Option<String> = row.get("builder_fee");
+                let fill_key: String = row.get("fill_key");
 
-                Fill::new(
+                let mut fill = Fill::new(
                     TimeMs::new(row.get("time_ms")),
                     Address::new(row.get("user")),
                     Coin::new(row.get("coin")),
@@ -104,7 +196,9 @@ impl Repository {
                     builder_fee_opt.and_then(|s| Decimal::from_str(&s).ok()),
                     row.get("tid"),
                     row.get("oid"),
-                )
+                );
+                fill.fill_key = fill_key;
+                fill
             })
             .collect();
 
@@ -119,7 +213,7 @@ impl Repository {
         let row = sqlx::query(
             r#"
             SELECT user, coin, time_ms, side, px, sz, fee, closed_pnl,
-                   builder_fee, tid, oid
+                   builder_fee, tid, oid, fill_key
             FROM raw_fills
             WHERE fill_key = ?
             "#,
@@ -141,8 +235,9 @@ impl Repository {
             let fee_str: String = r.get("fee");
             let closed_pnl_str: String = r.get("closed_pnl");
             let builder_fee_opt: Option<String> = r.get("builder_fee");
+            let fill_key: String = r.get("fill_key");
 
-            Fill::new(
+            let mut fill = Fill::new(
                 TimeMs::new(r.get("time_ms")),
                 Address::new(r.get("user")),
                 Coin::new(r.get("coin")),
@@ -154,7 +249,9 @@ impl Repository {
                 builder_fee_opt.and_then(|s| Decimal::from_str(&s).ok()),
                 r.get("tid"),
                 r.get("oid"),
-            )
+            );
+            fill.fill_key = fill_key;
+            fill
         }))
     }
 
@@ -250,9 +347,8 @@ mod tests {
             Some(456),
         );
 
-        repo.insert_raw_fill(&fill, "tid:123")
-            .await
-            .expect("insert failed");
+        let inserted = repo.insert_fill(&fill).await.expect("insert failed");
+        assert!(inserted);
 
         let fills = repo
             .query_raw_fills(&fill.user, &fill.coin, 0, 2000)
@@ -281,12 +377,10 @@ mod tests {
             None,
         );
 
-        repo.insert_raw_fill(&fill, "tid:123")
-            .await
-            .expect("insert failed");
+        repo.insert_fill(&fill).await.expect("insert failed");
 
         let retrieved = repo
-            .get_raw_fill_by_key("tid:123")
+            .get_raw_fill_by_key(fill.fill_key())
             .await
             .expect("query failed");
 
@@ -335,14 +429,11 @@ mod tests {
             None,
         );
 
-        repo.insert_raw_fill(&fill, "tid:123")
-            .await
-            .expect("first insert failed");
+        let inserted1 = repo.insert_fill(&fill).await.expect("first insert failed");
+        assert!(inserted1, "First insert should succeed");
 
-        // Insert same fill again - should not fail
-        repo.insert_raw_fill(&fill, "tid:123")
-            .await
-            .expect("second insert failed");
+        let inserted2 = repo.insert_fill(&fill).await.expect("second insert failed");
+        assert!(!inserted2, "Second insert should be ignored");
 
         let fills = repo
             .query_raw_fills(&fill.user, &fill.coin, 0, 2000)
@@ -351,5 +442,176 @@ mod tests {
 
         // Should only have one fill
         assert_eq!(fills.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_query_fills_without_coin() {
+        let (repo, _temp) = setup_test_db().await;
+
+        let fill_btc = Fill::new(
+            TimeMs::new(1000),
+            Address::new("0x123".to_string()),
+            Coin::new("BTC".to_string()),
+            Side::Buy,
+            Decimal::from_str("50000").unwrap(),
+            Decimal::from_str("1.5").unwrap(),
+            Decimal::from_str("10").unwrap(),
+            Decimal::from_str("0").unwrap(),
+            None,
+            Some(1),
+            None,
+        );
+        let fill_eth = Fill::new(
+            TimeMs::new(2000),
+            Address::new("0x123".to_string()),
+            Coin::new("ETH".to_string()),
+            Side::Sell,
+            Decimal::from_str("2500").unwrap(),
+            Decimal::from_str("2").unwrap(),
+            Decimal::from_str("5").unwrap(),
+            Decimal::from_str("0").unwrap(),
+            None,
+            Some(2),
+            None,
+        );
+
+        repo.insert_fill(&fill_btc).await.unwrap();
+        repo.insert_fill(&fill_eth).await.unwrap();
+
+        let fills = repo
+            .query_fills(&fill_btc.user, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(fills.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_insert_fills_batch() {
+        let (repo, _temp) = setup_test_db().await;
+
+        let user = Address::new("0x123".to_string());
+        let coin = Coin::new("BTC".to_string());
+
+        let fills: Vec<Fill> = (1..=5)
+            .map(|i| {
+                Fill::new(
+                    TimeMs::new(i * 1000),
+                    user.clone(),
+                    coin.clone(),
+                    Side::Buy,
+                    Decimal::from_str("50000").unwrap(),
+                    Decimal::from_str("1").unwrap(),
+                    Decimal::from_str("10").unwrap(),
+                    Decimal::from_str("0").unwrap(),
+                    None,
+                    Some(i),
+                    None,
+                )
+            })
+            .collect();
+
+        let inserted = repo.insert_fills_batch(&fills).await.unwrap();
+        assert_eq!(inserted, 5, "Should insert all 5 fills");
+
+        let stored = repo.query_fills(&user, None, None, None).await.unwrap();
+        assert_eq!(stored.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_insert_fills_batch_idempotent() {
+        let (repo, _temp) = setup_test_db().await;
+
+        let user = Address::new("0x123".to_string());
+        let coin = Coin::new("BTC".to_string());
+
+        let fills: Vec<Fill> = (1..=3)
+            .map(|i| {
+                Fill::new(
+                    TimeMs::new(i * 1000),
+                    user.clone(),
+                    coin.clone(),
+                    Side::Buy,
+                    Decimal::from_str("50000").unwrap(),
+                    Decimal::from_str("1").unwrap(),
+                    Decimal::from_str("10").unwrap(),
+                    Decimal::from_str("0").unwrap(),
+                    None,
+                    Some(i),
+                    None,
+                )
+            })
+            .collect();
+
+        // First batch insert
+        let inserted1 = repo.insert_fills_batch(&fills).await.unwrap();
+        assert_eq!(inserted1, 3);
+
+        // Second batch insert with same fills - should insert 0
+        let inserted2 = repo.insert_fills_batch(&fills).await.unwrap();
+        assert_eq!(inserted2, 0, "Second batch should insert nothing");
+
+        // Verify only 3 fills in DB
+        let stored = repo.query_fills(&user, None, None, None).await.unwrap();
+        assert_eq!(stored.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_insert_fills_batch_partial_duplicates() {
+        let (repo, _temp) = setup_test_db().await;
+
+        let user = Address::new("0x123".to_string());
+        let coin = Coin::new("BTC".to_string());
+
+        // Insert first 2 fills
+        let fills1: Vec<Fill> = (1..=2)
+            .map(|i| {
+                Fill::new(
+                    TimeMs::new(i * 1000),
+                    user.clone(),
+                    coin.clone(),
+                    Side::Buy,
+                    Decimal::from_str("50000").unwrap(),
+                    Decimal::from_str("1").unwrap(),
+                    Decimal::from_str("10").unwrap(),
+                    Decimal::from_str("0").unwrap(),
+                    None,
+                    Some(i),
+                    None,
+                )
+            })
+            .collect();
+        repo.insert_fills_batch(&fills1).await.unwrap();
+
+        // Insert fills 1-4 (2 duplicates, 2 new)
+        let fills2: Vec<Fill> = (1..=4)
+            .map(|i| {
+                Fill::new(
+                    TimeMs::new(i * 1000),
+                    user.clone(),
+                    coin.clone(),
+                    Side::Buy,
+                    Decimal::from_str("50000").unwrap(),
+                    Decimal::from_str("1").unwrap(),
+                    Decimal::from_str("10").unwrap(),
+                    Decimal::from_str("0").unwrap(),
+                    None,
+                    Some(i),
+                    None,
+                )
+            })
+            .collect();
+        let inserted = repo.insert_fills_batch(&fills2).await.unwrap();
+        assert_eq!(inserted, 2, "Should only insert 2 new fills");
+
+        let stored = repo.query_fills(&user, None, None, None).await.unwrap();
+        assert_eq!(stored.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_insert_fills_batch_empty() {
+        let (repo, _temp) = setup_test_db().await;
+
+        let inserted = repo.insert_fills_batch(&[]).await.unwrap();
+        assert_eq!(inserted, 0);
     }
 }
