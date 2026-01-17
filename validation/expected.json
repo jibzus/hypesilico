@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "description": "Golden test data for Hypesilico validation. Update with real wallet data when available.",
+  "description": "Golden test data for Hypesilico validation with real Hyperliquid wallet addresses.",
   "health_tests": {
     "health": {
       "endpoint": "/health",
@@ -69,8 +69,8 @@
   },
   "test_users": [
     {
-      "address": "0x0000000000000000000000000000000000000001",
-      "description": "Placeholder test wallet 1 - update with real address",
+      "address": "0x9eec98D048D06D9CD75318FFfA3f3960e081daAb",
+      "description": "Test wallet 1 - full test coverage",
       "tests": {
         "pnl": {
           "params": {},
@@ -102,7 +102,7 @@
         },
         "trades_with_coin": {
           "params": {
-            "coin": "BTC"
+            "coin": "ETH"
           },
           "expected": {
             "has_fields": ["trades"]
@@ -118,6 +118,192 @@
           "params": {},
           "expected": {
             "has_fields": ["totalDeposits", "depositCount", "deposits"]
+          }
+        }
+      }
+    },
+    {
+      "address": "0x5078C2fBeA2b2aD61bc840Bc023E35Fce56BeDb6",
+      "description": "Test wallet 2 - full test coverage",
+      "tests": {
+        "pnl": {
+          "params": {},
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "trades": {
+          "params": {},
+          "expected": {
+            "has_fields": ["trades"]
+          }
+        },
+        "positions_history": {
+          "params": {},
+          "expected": {
+            "has_fields": ["snapshots"]
+          }
+        },
+        "deposits": {
+          "params": {},
+          "expected": {
+            "has_fields": ["totalDeposits", "depositCount", "deposits"]
+          }
+        }
+      }
+    },
+    {
+      "address": "0x5b5d51203a0f9079f8aeb098a6523a13f298c060",
+      "description": "Test wallet 3",
+      "tests": {
+        "pnl": {
+          "params": {},
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "trades": {
+          "params": {},
+          "expected": {
+            "has_fields": ["trades"]
+          }
+        },
+        "deposits": {
+          "params": {},
+          "expected": {
+            "has_fields": ["totalDeposits", "depositCount", "deposits"]
+          }
+        }
+      }
+    },
+    {
+      "address": "0xb317d2bc2d3d2df5fa441b5bae0ab9d8b07283ae",
+      "description": "Test wallet 4",
+      "tests": {
+        "pnl": {
+          "params": {},
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "trades": {
+          "params": {},
+          "expected": {
+            "has_fields": ["trades"]
+          }
+        },
+        "positions_history": {
+          "params": {},
+          "expected": {
+            "has_fields": ["snapshots"]
+          }
+        }
+      }
+    },
+    {
+      "address": "0xEa6670EbdB4a388A8CFc16f6497Bf4f267B061EE",
+      "description": "Test wallet 5",
+      "tests": {
+        "pnl": {
+          "params": {},
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "trades": {
+          "params": {},
+          "expected": {
+            "has_fields": ["trades"]
+          }
+        }
+      }
+    },
+    {
+      "address": "0x7B7b908c076B9784487180dE92E7161c2982734E",
+      "description": "Test wallet 6",
+      "tests": {
+        "pnl": {
+          "params": {},
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "trades": {
+          "params": {},
+          "expected": {
+            "has_fields": ["trades"]
+          }
+        }
+      }
+    },
+    {
+      "address": "0x20c2d95a3dfdca9e9ad12794d5fa6fad99da44f5",
+      "description": "Test wallet 7",
+      "tests": {
+        "pnl": {
+          "params": {},
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "deposits": {
+          "params": {},
+          "expected": {
+            "has_fields": ["totalDeposits", "depositCount", "deposits"]
+          }
+        }
+      }
+    },
+    {
+      "address": "0x519c721De735f7c9E6146d167852E60d60496a47",
+      "description": "Test wallet 8",
+      "tests": {
+        "pnl": {
+          "params": {},
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "trades": {
+          "params": {},
+          "expected": {
+            "has_fields": ["trades"]
+          }
+        }
+      }
+    },
+    {
+      "address": "0xf967239debef10dbc78e9bbbb2d8a16b72a614eb",
+      "description": "Test wallet 9",
+      "tests": {
+        "pnl": {
+          "params": {},
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "positions_history": {
+          "params": {},
+          "expected": {
+            "has_fields": ["snapshots"]
+          }
+        }
+      }
+    },
+    {
+      "address": "0x3fd4444154242720c0d0c61c74a240d90c127d33",
+      "description": "Test wallet 10",
+      "tests": {
+        "pnl": {
+          "params": {},
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "trades": {
+          "params": {},
+          "expected": {
+            "has_fields": ["trades"]
           }
         }
       }

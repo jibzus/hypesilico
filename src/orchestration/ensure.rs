@@ -93,7 +93,8 @@ impl Ingestor {
     ) -> Result<TimeMs, IngestionError> {
         let requested = requested_from.unwrap_or(TimeMs::new(0));
         let lookback = self.config.lookback_ms;
-        let fetch_from = TimeMs::new(requested.as_ms().saturating_sub(lookback));
+        // Clamp to 0 to avoid negative timestamps (Hyperliquid API rejects them)
+        let fetch_from = TimeMs::new((requested.as_ms() - lookback).max(0));
 
         tracing::info!(
             "Window correctness: requested from {} but fetching from {} (lookback {}ms)",
