@@ -3,8 +3,10 @@
 use crate::domain::{Address, Coin, Decimal, TimeMs};
 
 pub mod position_tracker;
+pub mod taint;
 
 pub use position_tracker::{PositionState, PositionTracker};
+pub use taint::{BuilderOnlyFilter, TaintComputer, TaintInfo};
 
 /// A lifecycle from position open to close.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,4 +48,3 @@ pub enum EffectType {
     /// Decreasing position.
     Close,
 }
-

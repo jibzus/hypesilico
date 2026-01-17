@@ -12,7 +12,7 @@ pub mod fill;
 pub mod ordering;
 pub mod primitives;
 
-pub use attribution::{Attribution, AttributionMode, Confidence};
+pub use attribution::{Attribution, AttributionConfidence, AttributionMode, Confidence};
 pub use decimal::Decimal;
 pub use fill::Fill;
 pub use ordering::FillOrderingKey;
