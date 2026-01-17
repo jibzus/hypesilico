@@ -18,6 +18,18 @@ pub enum AppError {
     BadRequest(String),
 }
 
+impl From<sqlx::Error> for AppError {
+    fn from(err: sqlx::Error) -> Self {
+        AppError::Internal(err.to_string())
+    }
+}
+
+impl From<crate::orchestration::ensure::IngestionError> for AppError {
+    fn from(err: crate::orchestration::ensure::IngestionError) -> Self {
+        AppError::Internal(err.to_string())
+    }
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, error_message) = match self {

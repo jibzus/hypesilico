@@ -1,9 +1,10 @@
 //! Repository layer for database operations.
 
-use crate::domain::{Address, Coin, Decimal, Fill, Side, TimeMs};
+use crate::domain::{Address, Attribution, AttributionConfidence, AttributionMode, Coin, Decimal, Fill, Side, TimeMs};
 use crate::engine::{Effect, EffectType, Lifecycle, Snapshot};
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
+use std::collections::HashMap;
 use std::str::FromStr;
 use tracing::warn;
 
@@ -816,6 +817,117 @@ impl Repository {
                 )
             })
             .collect())
+    }
+
+    /// Query full attribution records for a list of fill keys.
+    ///
+    /// Missing attributions are omitted from the returned map.
+    ///
+    /// # Errors
+    /// Returns an error if the query fails.
+    pub async fn query_attributions_full(
+        &self,
+        fill_keys: &[String],
+    ) -> Result<HashMap<String, Attribution>, sqlx::Error> {
+        if fill_keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let placeholders = vec!["?"; fill_keys.len()].join(",");
+        let sql = format!(
+            r#"
+            SELECT fill_key, attributed, mode, confidence, builder
+            FROM fill_attributions
+            WHERE fill_key IN ({})
+            "#,
+            placeholders
+        );
+
+        let mut query = sqlx::query(&sql);
+        for key in fill_keys {
+            query = query.bind(key);
+        }
+
+        let rows = query.fetch_all(&self.pool).await?;
+
+        let mut out = HashMap::with_capacity(rows.len());
+        for row in rows {
+            let fill_key = row.get::<String, _>("fill_key");
+            let attributed = row.get::<i32, _>("attributed") != 0;
+            let mode_str = row.get::<String, _>("mode");
+            let confidence_str = row.get::<String, _>("confidence");
+            let builder_opt = row.get::<Option<String>, _>("builder");
+
+            let mode = match mode_str.as_str() {
+                "heuristic" => AttributionMode::Heuristic,
+                "logs" => AttributionMode::Logs,
+                _ => AttributionMode::Heuristic,
+            };
+            let confidence = match confidence_str.as_str() {
+                "exact" => AttributionConfidence::Exact,
+                "fuzzy" => AttributionConfidence::Fuzzy,
+                "low" => AttributionConfidence::Low,
+                _ => AttributionConfidence::Low,
+            };
+            let builder = builder_opt.map(Address::new);
+
+            out.insert(
+                fill_key,
+                Attribution {
+                    attributed,
+                    mode,
+                    confidence,
+                    builder,
+                },
+            );
+        }
+
+        Ok(out)
+    }
+
+    /// Upsert full attribution records (including optional builder address).
+    ///
+    /// # Errors
+    /// Returns an error if the insert fails.
+    pub async fn upsert_attributions_full(
+        &self,
+        attributions: &[(String, Attribution)],
+    ) -> Result<(), sqlx::Error> {
+        if attributions.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await?;
+
+        for (fill_key, attribution) in attributions {
+            let mode = match attribution.mode {
+                AttributionMode::Heuristic => "heuristic",
+                AttributionMode::Logs => "logs",
+            };
+            let confidence = match attribution.confidence {
+                AttributionConfidence::Exact => "exact",
+                AttributionConfidence::Fuzzy => "fuzzy",
+                AttributionConfidence::Low => "low",
+            };
+
+            sqlx::query(
+                r#"
+                INSERT OR REPLACE INTO fill_attributions
+                (fill_key, attributed, mode, confidence, builder)
+                VALUES (?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(fill_key)
+            .bind(if attribution.attributed { 1 } else { 0 })
+            .bind(mode)
+            .bind(confidence)
+            .bind(attribution.builder.as_ref().map(|b| b.as_str()))
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Query fill effects for a user and coin.

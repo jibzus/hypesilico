@@ -20,11 +20,20 @@ async fn main() {
         }
     };
 
-    // Create router
-    let app = api::create_router();
+    let port = config.port;
+
+    // Create router + state
+    let state = match api::create_state(config).await {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Initialization error: {}", e);
+            std::process::exit(1);
+        }
+    };
+    let app = api::create_router(state);
 
     // Bind to address
-    let addr = SocketAddr::from(([127, 0, 0, 1], config.port));
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = match tokio::net::TcpListener::bind(&addr).await {
         Ok(l) => l,
         Err(e) => {

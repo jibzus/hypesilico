@@ -1,6 +1,6 @@
 //! Database migrations and initialization.
 
-use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnection, SqlitePool, SqlitePoolOptions};
 use std::path::Path;
 use tracing::info;
 
@@ -14,11 +14,16 @@ pub async fn init_db(db_path: &str) -> Result<SqlitePool, sqlx::Error> {
 
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
+        .after_connect(|conn, _meta| {
+            Box::pin(async move {
+                configure_pragmas_connection(conn).await?;
+                Ok(())
+            })
+        })
         .connect(&format!("sqlite:{}?mode=rwc", db_path))
         .await?;
 
     run_migrations(&pool).await?;
-    configure_pragmas(&pool).await?;
 
     info!("Database initialized successfully at {}", db_path);
     Ok(pool)
@@ -41,27 +46,27 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 }
 
 /// Configure SQLite pragmas for optimal performance and reliability.
-async fn configure_pragmas(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+async fn configure_pragmas_connection(conn: &mut SqliteConnection) -> Result<(), sqlx::Error> {
     use sqlx::Row;
 
     info!("Configuring SQLite pragmas...");
 
     sqlx::query("PRAGMA foreign_keys = ON")
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
 
     // journal_mode returns the actual mode set; must use fetch to get result
     let row = sqlx::query("PRAGMA journal_mode = WAL")
-        .fetch_one(pool)
+        .fetch_one(&mut *conn)
         .await?;
     let journal_mode: String = row.get(0);
     info!("SQLite journal_mode set to: {}", journal_mode);
 
     sqlx::query("PRAGMA busy_timeout = 5000")
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
     sqlx::query("PRAGMA synchronous = NORMAL")
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
 
     info!("SQLite pragmas configured");
