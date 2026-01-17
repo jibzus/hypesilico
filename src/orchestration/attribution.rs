@@ -20,6 +20,26 @@ pub enum AttributionIngestionError {
     InvalidTimestamp(i64),
 }
 
+/// Encapsulates builder logs for a specific day with lazy index creation.
+///
+/// This pattern avoids the borrow-checker complexity of holding both a `Vec`
+/// and a reference-based index simultaneously. Instead of caching the index,
+/// we create it on demand via [`DayContext::index()`].
+struct DayContext {
+    day: String,
+    logs: Vec<crate::domain::BuilderLogFill>,
+}
+
+impl DayContext {
+    fn new(day: String, logs: Vec<crate::domain::BuilderLogFill>) -> Self {
+        Self { day, logs }
+    }
+
+    fn index(&self) -> BuilderLogsIndex<'_> {
+        BuilderLogsIndex::new(&self.logs)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AttributionIngestor {
     pub tolerances: MatchTolerances,
@@ -92,52 +112,47 @@ impl AttributionIngestor {
         let mut staged = Vec::with_capacity(fills.len());
 
         // Group fills by UTC day for builder logs fetching.
-        let mut current_day: Option<String> = None;
-        let mut day_logs: Vec<crate::domain::BuilderLogFill> = Vec::new();
-        let mut day_index: Option<BuilderLogsIndex<'_>> = None;
+        // Uses DayContext to encapsulate logs and lazy index creation.
+        let mut day_ctx: Option<DayContext> = None;
 
         for fill in &fills {
             let day = yyyymmdd_utc(fill.time_ms.as_ms())?;
-            let need_refresh = current_day.as_deref() != Some(&day);
+            let need_refresh = day_ctx.as_ref().map_or(true, |ctx| ctx.day != day);
 
             if need_refresh {
-                current_day = Some(day.clone());
-                day_index = None; // drop any borrows before mutating logs
-
-                let logs_available = match config.builder_attribution_mode {
-                    BuilderAttributionMode::Heuristic => {
-                        day_logs.clear();
-                        false
-                    }
+                // Fetch logs for the new day based on attribution mode.
+                //
+                // Error handling differs by mode:
+                // - Logs mode: Hard error on HTTP failure (strict correctness required)
+                // - Auto mode: Warning + heuristic fallback (graceful degradation)
+                let logs = match config.builder_attribution_mode {
+                    BuilderAttributionMode::Heuristic => Vec::new(),
                     BuilderAttributionMode::Logs => {
-                        day_logs = logs_fetcher.fetch_and_parse_day(&target_builder, &day).await?;
-                        true
+                        logs_fetcher.fetch_and_parse_day(&target_builder, &day).await?
                     }
-                    BuilderAttributionMode::Auto => match logs_fetcher
-                        .fetch_and_parse_day(&target_builder, &day)
-                        .await
-                    {
-                        Ok(logs) => {
-                            day_logs = logs;
-                            true
+                    BuilderAttributionMode::Auto => {
+                        match logs_fetcher.fetch_and_parse_day(&target_builder, &day).await {
+                            Ok(logs) => logs,
+                            Err(e) => {
+                                tracing::warn!(
+                                    builder=%target_builder,
+                                    yyyymmdd=%day,
+                                    error=%e,
+                                    "Failed to fetch builder logs, falling back to heuristic attribution"
+                                );
+                                Vec::new()
+                            }
                         }
-                        Err(e) => {
-                            tracing::warn!(builder=%target_builder, yyyymmdd=%day, error=%e, "Failed to fetch builder logs, falling back to heuristic attribution");
-                            day_logs.clear();
-                            false
-                        }
-                    },
+                    }
                 };
-
-                if logs_available {
-                    day_index = Some(BuilderLogsIndex::new(&day_logs));
-                }
+                day_ctx = Some(DayContext::new(day, logs));
             }
 
+            let index = day_ctx.as_ref().map(|ctx| ctx.index());
             let attribution = self.attribute_fill(
                 config.builder_attribution_mode,
                 fill,
-                day_index.as_ref(),
+                index.as_ref(),
                 &target_builder,
             );
 

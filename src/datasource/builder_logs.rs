@@ -197,4 +197,16 @@ mod tests {
         let err = BuilderLogsFetcher::parse_csv(csv).unwrap_err();
         assert!(matches!(err, BuilderLogsError::Csv(_)));
     }
+
+    #[test]
+    fn csv_parsing_uppercase_side() {
+        // Verify uppercase "A" -> Buy and "B" -> Sell are handled correctly
+        let csv = b"time_ms,user,coin,side,px,sz,tid,oid\n\
+            1700000000000,0xabc,BTC,A,100,1,42,1001\n\
+            1700000000001,0xdef,ETH,B,200,2,43,1002\n";
+        let fills = BuilderLogsFetcher::parse_csv(csv).unwrap();
+        assert_eq!(fills.len(), 2);
+        assert_eq!(fills[0].side, Side::Buy, "uppercase 'A' should be Buy");
+        assert_eq!(fills[1].side, Side::Sell, "uppercase 'B' should be Sell");
+    }
 }
