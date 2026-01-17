@@ -5,6 +5,7 @@ pub mod db;
 pub mod domain;
 pub mod engine;
 pub mod error;
+pub mod orchestration;
 
 pub use config::Config;
 pub use datasource::{DataSource, DataSourceError, Deposit, HyperliquidDataSource, MockDataSource};

@@ -12,8 +12,18 @@ impl TimeMs {
         TimeMs(ms)
     }
 
+    /// Current time in milliseconds since Unix epoch.
+    pub fn now() -> Self {
+        TimeMs(chrono::Utc::now().timestamp_millis())
+    }
+
     /// Get the underlying milliseconds value.
     pub fn as_i64(&self) -> i64 {
+        self.0
+    }
+
+    /// Alias for `as_i64`, to match `*_ms` conventions.
+    pub fn as_ms(&self) -> i64 {
         self.0
     }
 }

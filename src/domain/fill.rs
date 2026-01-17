@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 /// A single trade fill/execution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Fill {
+    /// Stable unique identifier for this fill.
+    pub fill_key: String,
     /// Time of the fill in milliseconds since Unix epoch.
     pub time_ms: TimeMs,
     /// User/wallet address.
@@ -49,7 +51,20 @@ impl Fill {
         tid: Option<i64>,
         oid: Option<i64>,
     ) -> Self {
+        let fill_key = Self::compute_fill_key(
+            &user,
+            &coin,
+            time_ms,
+            side,
+            &px,
+            &sz,
+            &fee,
+            &closed_pnl,
+            tid,
+            oid,
+        );
         Fill {
+            fill_key,
             time_ms,
             user,
             coin,
@@ -71,30 +86,54 @@ impl Fill {
         self
     }
 
-    /// Get a stable fill key for ordering/deduplication.
-    /// Prefers tid, falls back to oid, then uses a hash of other fields.
-    pub fn fill_key(&self) -> String {
-        if let Some(tid) = self.tid {
-            format!("tid:{}", tid)
-        } else if let Some(oid) = self.oid {
-            format!("oid:{}", oid)
-        } else {
-            // Fallback: hash of deterministic fields
-            format!(
-                "hash:{}:{}:{}:{}:{}",
-                self.time_ms.as_i64(),
-                self.user,
-                self.coin,
-                self.side,
-                self.px
-            )
+    /// Generate a stable unique key for this fill.
+    ///
+    /// Priority: `tid` (if present) > hash of deterministic fields.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compute_fill_key(
+        user: &Address,
+        coin: &Coin,
+        time_ms: TimeMs,
+        side: Side,
+        px: &Decimal,
+        sz: &Decimal,
+        fee: &Decimal,
+        closed_pnl: &Decimal,
+        tid: Option<i64>,
+        oid: Option<i64>,
+    ) -> String {
+        if let Some(tid) = tid {
+            return format!("tid:{}", tid);
         }
+
+        use sha2::{Digest, Sha256};
+
+        let mut hasher = Sha256::new();
+        hasher.update(user.as_str());
+        hasher.update(coin.as_str());
+        hasher.update(time_ms.as_ms().to_le_bytes());
+        hasher.update(if side == Side::Buy { b"B" } else { b"S" });
+        hasher.update(px.to_canonical_string());
+        hasher.update(sz.to_canonical_string());
+        hasher.update(fee.to_canonical_string());
+        hasher.update(closed_pnl.to_canonical_string());
+        if let Some(oid) = oid {
+            hasher.update(oid.to_le_bytes());
+        }
+        let hash = hasher.finalize();
+        format!("hash:{}", hex::encode(&hash[..16]))
+    }
+
+    /// Borrow the precomputed fill key.
+    pub fn fill_key(&self) -> &str {
+        &self.fill_key
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_fill_creation() {
@@ -119,41 +158,123 @@ mod tests {
     }
 
     #[test]
-    fn test_fill_key_prefers_tid() {
-        let fill = Fill::new(
-            TimeMs::new(1000),
-            Address::new("0x123".to_string()),
-            Coin::new("BTC".to_string()),
-            Side::Buy,
-            Decimal::from_str_canonical("50000").unwrap(),
-            Decimal::from_str_canonical("1.5").unwrap(),
-            Decimal::from_str_canonical("10").unwrap(),
-            Decimal::from_str_canonical("0").unwrap(),
-            None,
-            Some(123),
-            Some(456),
-        );
+    fn test_fill_key_with_tid() {
+        let user = Address::new("0x123".to_string());
+        let coin = Coin::new("BTC".to_string());
+        let px = Decimal::from_str("50000").unwrap();
+        let sz = Decimal::from_str("1.5").unwrap();
+        let fee = Decimal::from_str("10").unwrap();
+        let pnl = Decimal::from_str("0").unwrap();
 
-        assert_eq!(fill.fill_key(), "tid:123");
+        let key = Fill::compute_fill_key(
+            &user,
+            &coin,
+            TimeMs::new(1000),
+            Side::Buy,
+            &px,
+            &sz,
+            &fee,
+            &pnl,
+            Some(12345),
+            Some(999),
+        );
+        assert_eq!(key, "tid:12345");
     }
 
     #[test]
-    fn test_fill_key_fallback_to_oid() {
-        let fill = Fill::new(
-            TimeMs::new(1000),
-            Address::new("0x123".to_string()),
-            Coin::new("BTC".to_string()),
-            Side::Buy,
-            Decimal::from_str_canonical("50000").unwrap(),
-            Decimal::from_str_canonical("1.5").unwrap(),
-            Decimal::from_str_canonical("10").unwrap(),
-            Decimal::from_str_canonical("0").unwrap(),
-            None,
-            None,
-            Some(456),
-        );
+    fn test_fill_key_without_tid_uses_hash() {
+        let user = Address::new("0x123".to_string());
+        let coin = Coin::new("BTC".to_string());
+        let px = Decimal::from_str("50000").unwrap();
+        let sz = Decimal::from_str("1.5").unwrap();
+        let fee = Decimal::from_str("10").unwrap();
+        let pnl = Decimal::from_str("0").unwrap();
 
-        assert_eq!(fill.fill_key(), "oid:456");
+        let key = Fill::compute_fill_key(
+            &user,
+            &coin,
+            TimeMs::new(1000),
+            Side::Buy,
+            &px,
+            &sz,
+            &fee,
+            &pnl,
+            None,
+            Some(999),
+        );
+        assert!(key.starts_with("hash:"));
+        assert_eq!(key.len(), 5 + 32);
+    }
+
+    #[test]
+    fn test_fill_key_deterministic() {
+        let user = Address::new("0x123".to_string());
+        let coin = Coin::new("BTC".to_string());
+        let px = Decimal::from_str("50000").unwrap();
+        let sz = Decimal::from_str("1.5").unwrap();
+        let fee = Decimal::from_str("10").unwrap();
+        let pnl = Decimal::from_str("0").unwrap();
+
+        let key1 = Fill::compute_fill_key(
+            &user,
+            &coin,
+            TimeMs::new(1000),
+            Side::Buy,
+            &px,
+            &sz,
+            &fee,
+            &pnl,
+            None,
+            Some(999),
+        );
+        let key2 = Fill::compute_fill_key(
+            &user,
+            &coin,
+            TimeMs::new(1000),
+            Side::Buy,
+            &px,
+            &sz,
+            &fee,
+            &pnl,
+            None,
+            Some(999),
+        );
+        assert_eq!(key1, key2, "Same inputs must produce same key");
+    }
+
+    #[test]
+    fn test_fill_key_different_for_different_fills() {
+        let user = Address::new("0x123".to_string());
+        let coin = Coin::new("BTC".to_string());
+        let sz = Decimal::from_str("1.5").unwrap();
+        let fee = Decimal::from_str("10").unwrap();
+        let pnl = Decimal::from_str("0").unwrap();
+
+        let key1 = Fill::compute_fill_key(
+            &user,
+            &coin,
+            TimeMs::new(1000),
+            Side::Buy,
+            &Decimal::from_str("100").unwrap(),
+            &sz,
+            &fee,
+            &pnl,
+            None,
+            Some(999),
+        );
+        let key2 = Fill::compute_fill_key(
+            &user,
+            &coin,
+            TimeMs::new(1000),
+            Side::Buy,
+            &Decimal::from_str("101").unwrap(),
+            &sz,
+            &fee,
+            &pnl,
+            None,
+            Some(999),
+        );
+        assert_ne!(key1, key2);
     }
 
     #[test]
