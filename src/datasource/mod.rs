@@ -1,6 +1,6 @@
 //! Data source abstraction for fetching fills, deposits, and equity from external sources.
 
-use crate::domain::{Address, Coin, Decimal, Fill, TimeMs};
+use crate::domain::{Decimal, Deposit, Fill};
 use async_trait::async_trait;
 use std::fmt;
 
@@ -9,15 +9,6 @@ pub mod mock;
 
 pub use hyperliquid::HyperliquidDataSource;
 pub use mock::MockDataSource;
-
-/// Represents a deposit or withdrawal event.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Deposit {
-    pub user: Address,
-    pub time_ms: TimeMs,
-    pub amount: Decimal,
-    pub coin: Coin,
-}
 
 /// Data source trait for fetching fills, deposits, and equity information.
 ///
@@ -107,6 +98,7 @@ impl std::error::Error for DataSourceError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{Address, TimeMs};
 
     #[test]
     fn test_datasource_error_display() {
@@ -128,13 +120,12 @@ mod tests {
 
     #[test]
     fn test_deposit_clone_and_eq() {
-        let deposit = Deposit {
-            user: Address::new("0x123".to_string()),
-            time_ms: TimeMs::new(1000),
-            amount: Decimal::from_str_canonical("100").unwrap(),
-            coin: Coin::new("BTC".to_string()),
-        };
-
+        let deposit = Deposit::new(
+            Address::new("0x123".to_string()),
+            TimeMs::new(1000),
+            Decimal::from_str_canonical("100").unwrap(),
+            None,
+        );
         let deposit2 = deposit.clone();
         assert_eq!(deposit, deposit2);
     }

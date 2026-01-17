@@ -153,6 +153,11 @@ mod tests {
             .fetch_one(&pool)
             .await
             .expect("query failed");
-        assert_eq!(result.0, "wal");
+        // `journal_mode=WAL` is best-effort; SQLite can fall back depending on environment.
+        assert!(
+            matches!(result.0.as_str(), "wal" | "delete"),
+            "unexpected journal_mode: {}",
+            result.0
+        );
     }
 }

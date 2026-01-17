@@ -8,12 +8,14 @@
 
 pub mod attribution;
 pub mod decimal;
+pub mod deposit;
 pub mod fill;
 pub mod ordering;
 pub mod primitives;
 
 pub use attribution::{Attribution, AttributionConfidence, AttributionMode, Confidence};
 pub use decimal::Decimal;
+pub use deposit::Deposit;
 pub use fill::Fill;
 pub use ordering::FillOrderingKey;
 pub use primitives::{Address, Coin, Side, TimeMs};

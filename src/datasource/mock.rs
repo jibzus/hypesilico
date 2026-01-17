@@ -1,7 +1,7 @@
 //! Mock data source for testing without network calls.
 
-use super::{DataSource, DataSourceError, Deposit};
-use crate::domain::{Address, Decimal, Fill, TimeMs};
+use super::{DataSource, DataSourceError};
+use crate::domain::{Address, Decimal, Deposit, Fill, TimeMs};
 use async_trait::async_trait;
 
 /// Mock data source that returns predefined test data.
@@ -152,12 +152,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_mock_datasource_fetch_deposits() {
-        let deposit = Deposit {
-            user: Address::new("0x123".to_string()),
-            time_ms: TimeMs::new(1000),
-            amount: Decimal::from_str_canonical("1000").unwrap(),
-            coin: Coin::new("USDC".to_string()),
-        };
+        let deposit = Deposit::new(
+            Address::new("0x123".to_string()),
+            TimeMs::new(1000),
+            Decimal::from_str_canonical("1000").unwrap(),
+            Some("0xdeadbeef".to_string()),
+        );
 
         let mock = MockDataSource::new().with_deposit(deposit.clone());
         let deposits = mock.fetch_deposits("0x123", 0, 2000).await.unwrap();
