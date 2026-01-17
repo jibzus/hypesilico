@@ -60,6 +60,7 @@ impl Fill {
             &sz,
             &fee,
             &closed_pnl,
+            builder_fee.as_ref(),
             tid,
             oid,
         );
@@ -99,6 +100,7 @@ impl Fill {
         sz: &Decimal,
         fee: &Decimal,
         closed_pnl: &Decimal,
+        builder_fee: Option<&Decimal>,
         tid: Option<i64>,
         oid: Option<i64>,
     ) -> String {
@@ -117,6 +119,9 @@ impl Fill {
         hasher.update(sz.to_canonical_string());
         hasher.update(fee.to_canonical_string());
         hasher.update(closed_pnl.to_canonical_string());
+        if let Some(bf) = builder_fee {
+            hasher.update(bf.to_canonical_string());
+        }
         if let Some(oid) = oid {
             hasher.update(oid.to_le_bytes());
         }
@@ -175,6 +180,7 @@ mod tests {
             &sz,
             &fee,
             &pnl,
+            None,
             Some(12345),
             Some(999),
         );
@@ -199,6 +205,7 @@ mod tests {
             &sz,
             &fee,
             &pnl,
+            None,
             None,
             Some(999),
         );
@@ -225,6 +232,7 @@ mod tests {
             &fee,
             &pnl,
             None,
+            None,
             Some(999),
         );
         let key2 = Fill::compute_fill_key(
@@ -236,6 +244,7 @@ mod tests {
             &sz,
             &fee,
             &pnl,
+            None,
             None,
             Some(999),
         );
@@ -260,6 +269,7 @@ mod tests {
             &fee,
             &pnl,
             None,
+            None,
             Some(999),
         );
         let key2 = Fill::compute_fill_key(
@@ -272,9 +282,66 @@ mod tests {
             &fee,
             &pnl,
             None,
+            None,
             Some(999),
         );
         assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn test_fill_key_different_for_different_builder_fee() {
+        let user = Address::new("0x123".to_string());
+        let coin = Coin::new("BTC".to_string());
+        let px = Decimal::from_str("50000").unwrap();
+        let sz = Decimal::from_str("1.5").unwrap();
+        let fee = Decimal::from_str("10").unwrap();
+        let pnl = Decimal::from_str("0").unwrap();
+        let bf1 = Decimal::from_str("5").unwrap();
+        let bf2 = Decimal::from_str("10").unwrap();
+
+        let key1 = Fill::compute_fill_key(
+            &user,
+            &coin,
+            TimeMs::new(1000),
+            Side::Buy,
+            &px,
+            &sz,
+            &fee,
+            &pnl,
+            Some(&bf1),
+            None,
+            Some(999),
+        );
+        let key2 = Fill::compute_fill_key(
+            &user,
+            &coin,
+            TimeMs::new(1000),
+            Side::Buy,
+            &px,
+            &sz,
+            &fee,
+            &pnl,
+            Some(&bf2),
+            None,
+            Some(999),
+        );
+        let key3 = Fill::compute_fill_key(
+            &user,
+            &coin,
+            TimeMs::new(1000),
+            Side::Buy,
+            &px,
+            &sz,
+            &fee,
+            &pnl,
+            None,
+            None,
+            Some(999),
+        );
+
+        assert_ne!(key1, key2, "Different builder fees must produce different keys");
+        assert_ne!(key1, key3, "With vs without builder fee must produce different keys");
+        assert_ne!(key2, key3, "With vs without builder fee must produce different keys");
     }
 
     #[test]
