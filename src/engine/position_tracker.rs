@@ -290,6 +290,21 @@ impl PositionTracker {
     pub fn into_outputs(self) -> (Vec<Lifecycle>, Vec<Snapshot>, Vec<Effect>) {
         (self.lifecycles, self.snapshots, self.effects)
     }
+
+    /// Get a reference to the accumulated lifecycles.
+    pub fn get_lifecycles(&self) -> &[Lifecycle] {
+        &self.lifecycles
+    }
+
+    /// Get a reference to the accumulated snapshots.
+    pub fn get_snapshots(&self) -> &[Snapshot] {
+        &self.snapshots
+    }
+
+    /// Get a reference to the accumulated effects.
+    pub fn get_effects(&self) -> &[Effect] {
+        &self.effects
+    }
 }
 
 impl Default for PositionTracker {
@@ -297,4 +312,3 @@ impl Default for PositionTracker {
         Self::new()
     }
 }
-
