@@ -823,6 +823,8 @@ impl Repository {
     ///
     /// Missing attributions are omitted from the returned map.
     ///
+    /// Uses chunked queries to avoid SQLite's 999 parameter limit.
+    ///
     /// # Errors
     /// Returns an error if the query fails.
     pub async fn query_attributions_full(
@@ -833,53 +835,58 @@ impl Repository {
             return Ok(HashMap::new());
         }
 
-        let placeholders = vec!["?"; fill_keys.len()].join(",");
-        let sql = format!(
-            r#"
-            SELECT fill_key, attributed, mode, confidence, builder
-            FROM fill_attributions
-            WHERE fill_key IN ({})
-            "#,
-            placeholders
-        );
+        // SQLite has a 999 parameter limit; chunk to 500 for safety margin.
+        const CHUNK_SIZE: usize = 500;
+        let mut out = HashMap::with_capacity(fill_keys.len());
 
-        let mut query = sqlx::query(&sql);
-        for key in fill_keys {
-            query = query.bind(key);
-        }
-
-        let rows = query.fetch_all(&self.pool).await?;
-
-        let mut out = HashMap::with_capacity(rows.len());
-        for row in rows {
-            let fill_key = row.get::<String, _>("fill_key");
-            let attributed = row.get::<i32, _>("attributed") != 0;
-            let mode_str = row.get::<String, _>("mode");
-            let confidence_str = row.get::<String, _>("confidence");
-            let builder_opt = row.get::<Option<String>, _>("builder");
-
-            let mode = match mode_str.as_str() {
-                "heuristic" => AttributionMode::Heuristic,
-                "logs" => AttributionMode::Logs,
-                _ => AttributionMode::Heuristic,
-            };
-            let confidence = match confidence_str.as_str() {
-                "exact" => AttributionConfidence::Exact,
-                "fuzzy" => AttributionConfidence::Fuzzy,
-                "low" => AttributionConfidence::Low,
-                _ => AttributionConfidence::Low,
-            };
-            let builder = builder_opt.map(Address::new);
-
-            out.insert(
-                fill_key,
-                Attribution {
-                    attributed,
-                    mode,
-                    confidence,
-                    builder,
-                },
+        for chunk in fill_keys.chunks(CHUNK_SIZE) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                r#"
+                SELECT fill_key, attributed, mode, confidence, builder
+                FROM fill_attributions
+                WHERE fill_key IN ({})
+                "#,
+                placeholders
             );
+
+            let mut query = sqlx::query(&sql);
+            for key in chunk {
+                query = query.bind(key);
+            }
+
+            let rows = query.fetch_all(&self.pool).await?;
+
+            for row in rows {
+                let fill_key = row.get::<String, _>("fill_key");
+                let attributed = row.get::<i32, _>("attributed") != 0;
+                let mode_str = row.get::<String, _>("mode");
+                let confidence_str = row.get::<String, _>("confidence");
+                let builder_opt = row.get::<Option<String>, _>("builder");
+
+                let mode = match mode_str.as_str() {
+                    "heuristic" => AttributionMode::Heuristic,
+                    "logs" => AttributionMode::Logs,
+                    _ => AttributionMode::Heuristic,
+                };
+                let confidence = match confidence_str.as_str() {
+                    "exact" => AttributionConfidence::Exact,
+                    "fuzzy" => AttributionConfidence::Fuzzy,
+                    "low" => AttributionConfidence::Low,
+                    _ => AttributionConfidence::Low,
+                };
+                let builder = builder_opt.map(Address::new);
+
+                out.insert(
+                    fill_key,
+                    Attribution {
+                        attributed,
+                        mode,
+                        confidence,
+                        builder,
+                    },
+                );
+            }
         }
 
         Ok(out)

@@ -1,6 +1,7 @@
 use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 use crate::domain::ordering::sort_fills_deterministic;
 use crate::domain::{Address, AttributionMode, Coin, TimeMs};
@@ -21,6 +22,13 @@ pub struct TradesQuery {
 #[serde(rename_all = "camelCase")]
 pub struct TradesResponse {
     pub trades: Vec<TradeDto>,
+    /// Indicates whether any fills were excluded from the response when `builderOnly=true`.
+    ///
+    /// - `Some(true)`: At least one fill was excluded because it lacked builder attribution.
+    /// - `Some(false)`: All fills in the window had builder attribution (none excluded).
+    /// - `None`: `builderOnly` was not set (all fills returned regardless of attribution).
+    ///
+    /// Note: This is a per-fill exclusion flag, not a lifecycle-level taint indicator.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tainted: Option<bool>,
 }
@@ -43,7 +51,8 @@ pub async fn get_trades(
     Query(params): Query<TradesQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<TradesResponse>, AppError> {
-    let user = parse_user_address(&params.user)?;
+    let user = Address::from_str(&params.user)
+        .map_err(|_| AppError::BadRequest("Invalid user address".into()))?;
 
     let coin = match params.coin.as_deref() {
         Some("") | None => None,
@@ -112,18 +121,4 @@ pub async fn get_trades(
         .collect();
 
     Ok(Json(TradesResponse { trades, tainted }))
-}
-
-fn parse_user_address(user: &str) -> Result<Address, AppError> {
-    if !user.starts_with("0x") {
-        return Err(AppError::BadRequest("Invalid user address".into()));
-    }
-    let hex_part = &user[2..];
-    if hex_part.is_empty()
-        || hex_part.len() > 40
-        || !hex_part.chars().all(|c| c.is_ascii_hexdigit())
-    {
-        return Err(AppError::BadRequest("Invalid user address".into()));
-    }
-    Ok(Address::new(user.to_string()))
 }

@@ -52,6 +52,56 @@ impl std::fmt::Display for Address {
     }
 }
 
+impl std::str::FromStr for Address {
+    type Err = AddressParseError;
+
+    /// Parse an address from a string.
+    ///
+    /// Requires exactly 42 characters: "0x" prefix + 40 hex digits.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.len() != 42 {
+            return Err(AddressParseError::InvalidLength(s.len()));
+        }
+        if !s.starts_with("0x") {
+            return Err(AddressParseError::MissingPrefix);
+        }
+        let hex_part = &s[2..];
+        if !hex_part.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(AddressParseError::InvalidHex);
+        }
+        Ok(Address(s.to_string()))
+    }
+}
+
+/// Errors that can occur when parsing an address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AddressParseError {
+    /// Address must be exactly 42 characters (0x + 40 hex digits).
+    InvalidLength(usize),
+    /// Address must start with "0x".
+    MissingPrefix,
+    /// Address must contain only hex digits after the "0x" prefix.
+    InvalidHex,
+}
+
+impl std::fmt::Display for AddressParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AddressParseError::InvalidLength(len) => {
+                write!(f, "address must be 42 characters, got {}", len)
+            }
+            AddressParseError::MissingPrefix => {
+                write!(f, "address must start with '0x'")
+            }
+            AddressParseError::InvalidHex => {
+                write!(f, "address must contain only hex digits")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AddressParseError {}
+
 /// Coin/asset symbol (e.g., "BTC", "ETH").
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Coin(pub String);
