@@ -4,9 +4,11 @@ use crate::domain::{Address, Coin, Decimal, TimeMs};
 
 pub mod position_tracker;
 pub mod taint;
+pub mod builder_logs_matcher;
 
 pub use position_tracker::{PositionState, PositionTracker};
 pub use taint::{BuilderOnlyFilter, TaintComputer, TaintInfo};
+pub use builder_logs_matcher::{BuilderLogsIndex, MatchTolerances};
 
 /// A lifecycle from position open to close.
 #[derive(Debug, Clone, PartialEq, Eq)]

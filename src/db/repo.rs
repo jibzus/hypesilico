@@ -740,13 +740,13 @@ impl Repository {
     /// Insert or update fill attributions.
     ///
     /// # Arguments
-    /// * `attributions` - Vec of (fill_key, attributed, mode, confidence)
+    /// * `attributions` - Vec of (fill_key, attributed, mode, confidence, builder)
     ///
     /// # Errors
     /// Returns an error if the insert fails.
     pub async fn insert_attributions(
         &self,
-        attributions: &[(String, bool, String, String)],
+        attributions: &[(String, bool, String, String, Option<String>)],
     ) -> Result<(), sqlx::Error> {
         if attributions.is_empty() {
             return Ok(());
@@ -754,18 +754,19 @@ impl Repository {
 
         let mut tx = self.pool.begin().await?;
 
-        for (fill_key, attributed, mode, confidence) in attributions {
+        for (fill_key, attributed, mode, confidence, builder) in attributions {
             sqlx::query(
                 r#"
                 INSERT OR REPLACE INTO fill_attributions
-                (fill_key, attributed, mode, confidence)
-                VALUES (?, ?, ?, ?)
+                (fill_key, attributed, mode, confidence, builder)
+                VALUES (?, ?, ?, ?, ?)
                 "#,
             )
             .bind(fill_key)
             .bind(if *attributed { 1 } else { 0 })
             .bind(mode)
             .bind(confidence)
+            .bind(builder)
             .execute(&mut *tx)
             .await?;
         }
@@ -784,7 +785,7 @@ impl Repository {
     pub async fn query_attributions(
         &self,
         fill_keys: &[String],
-    ) -> Result<Vec<(String, bool, String)>, sqlx::Error> {
+    ) -> Result<Vec<(String, bool, String, String, Option<String>)>, sqlx::Error> {
         if fill_keys.is_empty() {
             return Ok(Vec::new());
         }
@@ -792,7 +793,7 @@ impl Repository {
         let placeholders = vec!["?"; fill_keys.len()].join(",");
         let sql = format!(
             r#"
-            SELECT fill_key, attributed, mode
+            SELECT fill_key, attributed, mode, confidence, builder
             FROM fill_attributions
             WHERE fill_key IN ({})
             "#,
@@ -813,6 +814,8 @@ impl Repository {
                     row.get::<String, _>("fill_key"),
                     row.get::<i32, _>("attributed") != 0,
                     row.get::<String, _>("mode"),
+                    row.get::<String, _>("confidence"),
+                    row.get::<Option<String>, _>("builder"),
                 )
             })
             .collect())

@@ -6,9 +6,11 @@ use std::fmt;
 
 pub mod hyperliquid;
 pub mod mock;
+pub mod builder_logs;
 
 pub use hyperliquid::HyperliquidDataSource;
 pub use mock::MockDataSource;
+pub use builder_logs::{BuilderLogsError, BuilderLogsFetcher, BuilderLogsSource};
 
 /// Represents a deposit or withdrawal event.
 #[derive(Clone, Debug, PartialEq, Eq)]
