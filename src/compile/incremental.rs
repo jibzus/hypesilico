@@ -1,8 +1,9 @@
 //! Incremental compilation logic for processing fills and generating derived tables.
 
+use crate::db::Repository;
 use crate::domain::{Address, Attribution, AttributionMode, Coin};
 use crate::engine::{PositionTracker, TaintComputer};
-use crate::db::Repository;
+use std::collections::HashMap;
 
 /// Compiler for incremental fill processing.
 pub struct Compiler;
@@ -30,7 +31,9 @@ impl Compiler {
         let last_fill_key = watermark.as_ref().and_then(|(_, key)| key.clone());
 
         // Query uncompiled fills
-        let fills = repo.query_fills_after_watermark(user, coin, last_fill_key.as_deref()).await?;
+        let fills = repo
+            .query_fills_after_watermark(user, coin, last_fill_key.as_deref())
+            .await?;
 
         if fills.is_empty() {
             return Ok(0);
@@ -51,17 +54,26 @@ impl Compiler {
         let last_fill_key = fills.last().map(|f| f.fill_key.clone());
         let last_time_ms = fills.last().map(|f| f.time_ms);
 
-        // Insert derived tables in transaction
-        repo.insert_lifecycles(lifecycles).await?;
-        repo.insert_snapshots(user, coin, snapshots).await?;
-        repo.insert_effects(effects).await?;
+        // Insert all derived tables atomically in a single transaction
+        repo.insert_derived_tables_atomic(user, coin, lifecycles, snapshots, effects)
+            .await?;
 
-        // Compute taint for lifecycles
+        // Build fill_key -> lifecycle_id mapping from effects
+        // Effects already track which fill belongs to which lifecycle
+        let mut fill_to_lifecycle: HashMap<String, Vec<i64>> = HashMap::new();
+        for effect in effects {
+            fill_to_lifecycle
+                .entry(effect.fill_key.clone())
+                .or_default()
+                .push(effect.lifecycle_id);
+        }
+
+        // Query attributions for taint computation
         let fill_keys: Vec<String> = fills.iter().map(|f| f.fill_key.clone()).collect();
         let attributions_data = repo.query_attributions(&fill_keys).await?;
 
         // Build attribution map
-        let mut attribution_map = std::collections::HashMap::new();
+        let mut attribution_map = HashMap::new();
         for (fill_key, attributed, mode_str) in attributions_data {
             let mode = match mode_str.as_str() {
                 "heuristic" => AttributionMode::Heuristic,
@@ -77,14 +89,13 @@ impl Compiler {
             attribution_map.insert(fill_key, attribution);
         }
 
-        // Compute taint
+        // Compute taint using proper fill-to-lifecycle associations
         let mut taint_computer = TaintComputer::new();
-        for lifecycle in lifecycles.iter() {
-            for fill in &fills {
-                // Check if this fill belongs to this lifecycle
-                // For now, we'll associate all fills with all lifecycles (simplified)
-                // In a real implementation, we'd track which fills belong to which lifecycle
-                taint_computer.add_fill_to_lifecycle(lifecycle.id, fill.fill_key.clone());
+
+        // Associate fills with their actual lifecycles using effects data
+        for (fill_key, lifecycle_ids) in &fill_to_lifecycle {
+            for lifecycle_id in lifecycle_ids {
+                taint_computer.add_fill_to_lifecycle(*lifecycle_id, fill_key.clone());
             }
         }
 
@@ -108,21 +119,10 @@ impl Compiler {
 
         // Update watermark atomically
         if let (Some(time_ms), Some(key)) = (last_time_ms, last_fill_key) {
-            repo.store_compile_state(user, coin, Some(time_ms.as_i64()), Some(&key)).await?;
+            repo.store_compile_state(user, coin, Some(time_ms.as_i64()), Some(&key))
+                .await?;
         }
 
         Ok(fills.len())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_compiler_exists() {
-        // Placeholder test to ensure module compiles
-        let _compiler = Compiler;
-    }
-}
-

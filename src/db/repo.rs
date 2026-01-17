@@ -5,6 +5,7 @@ use crate::engine::{Effect, EffectType, Lifecycle, Snapshot};
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
 use std::str::FromStr;
+use tracing::warn;
 
 /// Repository for database operations.
 pub struct Repository {
@@ -370,16 +371,40 @@ impl Repository {
                 let builder_fee_opt: Option<String> = row.get("builder_fee");
                 let fill_key: String = row.get("fill_key");
 
+                // Parse decimals with warning on failure
+                let px = Decimal::from_str(&px_str).unwrap_or_else(|e| {
+                    warn!(fill_key = %fill_key, px = %px_str, error = %e, "Failed to parse px decimal, using default");
+                    Decimal::default()
+                });
+                let sz = Decimal::from_str(&sz_str).unwrap_or_else(|e| {
+                    warn!(fill_key = %fill_key, sz = %sz_str, error = %e, "Failed to parse sz decimal, using default");
+                    Decimal::default()
+                });
+                let fee = Decimal::from_str(&fee_str).unwrap_or_else(|e| {
+                    warn!(fill_key = %fill_key, fee = %fee_str, error = %e, "Failed to parse fee decimal, using default");
+                    Decimal::default()
+                });
+                let closed_pnl = Decimal::from_str(&closed_pnl_str).unwrap_or_else(|e| {
+                    warn!(fill_key = %fill_key, closed_pnl = %closed_pnl_str, error = %e, "Failed to parse closed_pnl decimal, using default");
+                    Decimal::default()
+                });
+                let builder_fee = builder_fee_opt.and_then(|s| {
+                    Decimal::from_str(&s).map_err(|e| {
+                        warn!(fill_key = %fill_key, builder_fee = %s, error = %e, "Failed to parse builder_fee decimal, ignoring");
+                        e
+                    }).ok()
+                });
+
                 let mut fill = Fill::new(
                     TimeMs::new(row.get("time_ms")),
                     Address::new(row.get("user")),
                     Coin::new(row.get("coin")),
                     side,
-                    Decimal::from_str(&px_str).unwrap_or_default(),
-                    Decimal::from_str(&sz_str).unwrap_or_default(),
-                    Decimal::from_str(&fee_str).unwrap_or_default(),
-                    Decimal::from_str(&closed_pnl_str).unwrap_or_default(),
-                    builder_fee_opt.and_then(|s| Decimal::from_str(&s).ok()),
+                    px,
+                    sz,
+                    fee,
+                    closed_pnl,
+                    builder_fee,
                     row.get("tid"),
                     row.get("oid"),
                 );
@@ -389,6 +414,100 @@ impl Repository {
             .collect();
 
         Ok(fills)
+    }
+
+    /// Insert all derived tables (lifecycles, snapshots, effects) atomically in a single transaction.
+    ///
+    /// This ensures that if any insert fails, the entire operation is rolled back,
+    /// preventing partial data from being committed.
+    ///
+    /// # Arguments
+    /// * `user` - User address
+    /// * `coin` - Coin/asset symbol
+    /// * `lifecycles` - Position lifecycles to insert
+    /// * `snapshots` - Position snapshots to insert
+    /// * `effects` - Fill effects to insert
+    ///
+    /// # Errors
+    /// Returns an error if any database operation fails.
+    pub async fn insert_derived_tables_atomic(
+        &self,
+        user: &Address,
+        coin: &Coin,
+        lifecycles: &[Lifecycle],
+        snapshots: &[Snapshot],
+        effects: &[Effect],
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        // Insert lifecycles with explicit IDs from the tracker
+        for lifecycle in lifecycles {
+            sqlx::query(
+                r#"
+                INSERT OR REPLACE INTO position_lifecycles
+                (id, user, coin, start_time_ms, end_time_ms, is_tainted, taint_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(lifecycle.id)
+            .bind(lifecycle.user.as_str())
+            .bind(lifecycle.coin.as_str())
+            .bind(lifecycle.start_time_ms.as_i64())
+            .bind(lifecycle.end_time_ms.map(|t| t.as_i64()))
+            .bind(0) // is_tainted - will be updated after taint computation
+            .bind::<Option<String>>(None) // taint_reason
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        // Insert snapshots
+        for snapshot in snapshots {
+            sqlx::query(
+                r#"
+                INSERT OR REPLACE INTO position_snapshots
+                (user, coin, time_ms, seq, net_size, avg_entry_px, lifecycle_id, is_tainted)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(user.as_str())
+            .bind(coin.as_str())
+            .bind(snapshot.time_ms.as_i64())
+            .bind(snapshot.seq)
+            .bind(snapshot.net_size.to_canonical_string())
+            .bind(snapshot.avg_entry_px.to_canonical_string())
+            .bind(snapshot.lifecycle_id)
+            .bind(0) // is_tainted
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        // Insert effects
+        for effect in effects {
+            let effect_type_str = match effect.effect_type {
+                EffectType::Open => "open",
+                EffectType::Close => "close",
+            };
+
+            sqlx::query(
+                r#"
+                INSERT OR REPLACE INTO fill_effects
+                (fill_key, lifecycle_id, effect_type, qty, notional, fee, closed_pnl)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&effect.fill_key)
+            .bind(effect.lifecycle_id)
+            .bind(effect_type_str)
+            .bind(effect.qty.to_canonical_string())
+            .bind(effect.notional.to_canonical_string())
+            .bind(effect.fee.to_canonical_string())
+            .bind(effect.closed_pnl.to_canonical_string())
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Insert position lifecycles into the database.
@@ -406,10 +525,11 @@ impl Repository {
             sqlx::query(
                 r#"
                 INSERT OR REPLACE INTO position_lifecycles
-                (user, coin, start_time_ms, end_time_ms, is_tainted, taint_reason)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (id, user, coin, start_time_ms, end_time_ms, is_tainted, taint_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
+            .bind(lifecycle.id)
             .bind(lifecycle.user.as_str())
             .bind(lifecycle.coin.as_str())
             .bind(lifecycle.start_time_ms.as_i64())

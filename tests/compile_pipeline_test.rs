@@ -20,6 +20,7 @@ async fn setup_test_db() -> (Repository, TempDir) {
     (Repository::new(pool), temp_dir)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_test_fill(
     time_ms: i64,
     user: &str,
