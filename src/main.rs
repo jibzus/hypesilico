@@ -1,5 +1,8 @@
-use hypesilico::{api, config::Config};
+use hypesilico::datasource::HyperliquidDataSource;
+use hypesilico::orchestration::ensure::Ingestor;
+use hypesilico::{api, config::Config, db::init_db, DataSource, Repository};
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
@@ -20,8 +23,22 @@ async fn main() {
         }
     };
 
+    // Initialize database and dependencies
+    let pool = match init_db(&config.database_path).await {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Failed to initialize database: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let repo = Arc::new(Repository::new(pool));
+    let datasource: Arc<dyn DataSource> =
+        Arc::new(HyperliquidDataSource::new(config.hyperliquid_api_url.clone()));
+    let ingestor = Arc::new(Ingestor::new(datasource, repo.clone(), config.clone()));
+
     // Create router
-    let app = api::create_router();
+    let app = api::create_router(api::AppState { repo, ingestor });
 
     // Bind to address
     let addr = SocketAddr::from(([127, 0, 0, 1], config.port));

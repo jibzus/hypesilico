@@ -7,6 +7,17 @@ use sqlx::Row;
 use std::str::FromStr;
 use tracing::warn;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionSnapshotRow {
+    pub time_ms: TimeMs,
+    pub seq: i32,
+    pub coin: Coin,
+    pub net_size: String,
+    pub avg_entry_px: String,
+    pub lifecycle_id: i64,
+    pub lifecycle_tainted: bool,
+}
+
 /// Repository for database operations.
 pub struct Repository {
     pool: SqlitePool,
@@ -205,6 +216,102 @@ impl Repository {
             .collect();
 
         Ok(fills)
+    }
+
+    /// Query distinct coins for a user within an optional time range.
+    ///
+    /// Used to determine which per-coin compile pipelines should run.
+    ///
+    /// # Errors
+    /// Returns an error if the query fails.
+    pub async fn query_distinct_coins(
+        &self,
+        user: &Address,
+        from_ms: Option<TimeMs>,
+        to_ms: Option<TimeMs>,
+    ) -> Result<Vec<Coin>, sqlx::Error> {
+        let from_ms = from_ms.unwrap_or(TimeMs::new(0)).as_ms();
+        let to_ms = to_ms.unwrap_or(TimeMs::new(i64::MAX)).as_ms();
+
+        let rows = sqlx::query(
+            r#"
+            SELECT DISTINCT coin
+            FROM raw_fills
+            WHERE user = ? AND time_ms >= ? AND time_ms <= ?
+            ORDER BY coin ASC
+            "#,
+        )
+        .bind(user.as_str())
+        .bind(from_ms)
+        .bind(to_ms)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| Coin::new(row.get::<String, _>("coin")))
+            .collect())
+    }
+
+    /// Query position snapshots for a user with optional coin and time window.
+    ///
+    /// Joins lifecycles to expose lifecycle-level taint flags for builder-only filtering.
+    ///
+    /// # Errors
+    /// Returns an error if the query fails.
+    pub async fn query_position_snapshots(
+        &self,
+        user: &Address,
+        coin: Option<&Coin>,
+        from_ms: Option<TimeMs>,
+        to_ms: Option<TimeMs>,
+    ) -> Result<Vec<PositionSnapshotRow>, sqlx::Error> {
+        let from_ms = from_ms.unwrap_or(TimeMs::new(0)).as_ms();
+        let to_ms = to_ms.unwrap_or(TimeMs::new(i64::MAX)).as_ms();
+
+        let (sql, binds_coin) = if coin.is_some() {
+            (
+                r#"
+                SELECT ps.time_ms, ps.seq, ps.coin, ps.net_size, ps.avg_entry_px, ps.lifecycle_id, pl.is_tainted
+                FROM position_snapshots ps
+                JOIN position_lifecycles pl ON ps.lifecycle_id = pl.id
+                WHERE ps.user = ? AND ps.coin = ? AND ps.time_ms >= ? AND ps.time_ms <= ?
+                ORDER BY ps.time_ms ASC, ps.seq ASC, ps.coin ASC, ps.lifecycle_id ASC
+                "#,
+                true,
+            )
+        } else {
+            (
+                r#"
+                SELECT ps.time_ms, ps.seq, ps.coin, ps.net_size, ps.avg_entry_px, ps.lifecycle_id, pl.is_tainted
+                FROM position_snapshots ps
+                JOIN position_lifecycles pl ON ps.lifecycle_id = pl.id
+                WHERE ps.user = ? AND ps.time_ms >= ? AND ps.time_ms <= ?
+                ORDER BY ps.time_ms ASC, ps.seq ASC, ps.coin ASC, ps.lifecycle_id ASC
+                "#,
+                false,
+            )
+        };
+
+        let mut query = sqlx::query(sql).bind(user.as_str());
+        if binds_coin {
+            query = query.bind(coin.expect("binds_coin implies coin is Some").as_str());
+        }
+        query = query.bind(from_ms).bind(to_ms);
+
+        let rows = query.fetch_all(&self.pool).await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| PositionSnapshotRow {
+                time_ms: TimeMs::new(row.get::<i64, _>("time_ms")),
+                seq: row.get::<i32, _>("seq"),
+                coin: Coin::new(row.get::<String, _>("coin")),
+                net_size: row.get::<String, _>("net_size"),
+                avg_entry_px: row.get::<String, _>("avg_entry_px"),
+                lifecycle_id: row.get::<i64, _>("lifecycle_id"),
+                lifecycle_tainted: row.get::<i32, _>("is_tainted") != 0,
+            })
+            .collect())
     }
 
     /// Get a raw fill by its fill_key.
