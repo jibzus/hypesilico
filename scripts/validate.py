@@ -163,7 +163,9 @@ def validate_user_endpoint(
             continue  # Skip meta-fields
 
         if key not in response:
-            continue  # Already handled by has_fields check
+            # Fail on missing expected keys (not just has_fields)
+            errors.append(f"Missing expected field '{key}' in response")
+            continue
 
         actual = response[key]
 

@@ -119,9 +119,10 @@ cleanup() {
 trap cleanup EXIT
 
 # Check if server is already running
+# Note: curl failure must not abort script under set -e
 check_server_running() {
     local response
-    response=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/health" 2>/dev/null)
+    response=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/health" 2>/dev/null || true)
     [[ "$response" == "200" ]]
 }
 

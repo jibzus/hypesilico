@@ -64,9 +64,9 @@ ENV DATABASE_PATH=/data/ledger.db
 # Expose the server port
 EXPOSE 8080
 
-# Health check
+# Health check (uses CMD-SHELL for variable expansion)
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD-SHELL curl -f http://localhost:${PORT:-8080}/health || exit 1
 
 # Run the server
 CMD ["/app/hypesilico"]
