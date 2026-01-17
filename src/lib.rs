@@ -8,6 +8,7 @@ pub mod error;
 pub use config::Config;
 pub use db::{init_db, Repository};
 pub use domain::{
-    Address, Attribution, AttributionMode, Coin, Confidence, Decimal, Fill, Side, TimeMs,
+    Address, Attribution, AttributionConfidence, AttributionMode, Coin, Confidence, Decimal, Fill,
+    Side, TimeMs,
 };
 pub use error::AppError;
