@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Time in milliseconds since Unix epoch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default)]
 pub struct TimeMs(pub i64);
 
 impl TimeMs {

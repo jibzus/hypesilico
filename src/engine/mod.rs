@@ -17,7 +17,7 @@ pub struct Lifecycle {
 }
 
 /// A snapshot of position state after a fill.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Snapshot {
     pub time_ms: TimeMs,
     pub seq: i32, // Tie-breaker for same time_ms
@@ -27,7 +27,7 @@ pub struct Snapshot {
 }
 
 /// An effect of a fill on a lifecycle.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Effect {
     pub fill_key: String,
     pub lifecycle_id: i64,
@@ -38,9 +38,10 @@ pub struct Effect {
     pub closed_pnl: Decimal,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EffectType {
     /// Increasing position.
+    #[default]
     Open,
     /// Decreasing position.
     Close,

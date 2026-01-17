@@ -3,7 +3,7 @@ use crate::domain::{Decimal, Fill, Side};
 use super::{Effect, EffectType, Lifecycle, Snapshot};
 
 /// Current state of a position for a user+coin.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PositionState {
     /// Current net size: positive = long, negative = short, zero = flat.
     pub net_size: Decimal,
@@ -59,6 +59,10 @@ impl PositionTracker {
     }
 
     /// Process a single fill, updating state and emitting outputs.
+    ///
+    /// # Panics
+    /// Panics if fills are processed out of order (e.g., close before open).
+    /// Callers must ensure fills are sorted by (time_ms, tid).
     pub fn process_fill(&mut self, fill: &Fill) {
         let signed_qty = self.compute_signed_qty(fill);
         let old_size = self.state.net_size;
@@ -285,6 +289,12 @@ impl PositionTracker {
     /// Get the accumulated outputs.
     pub fn into_outputs(self) -> (Vec<Lifecycle>, Vec<Snapshot>, Vec<Effect>) {
         (self.lifecycles, self.snapshots, self.effects)
+    }
+}
+
+impl Default for PositionTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
