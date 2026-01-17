@@ -5,6 +5,7 @@ use crate::domain::{Address, Coin, TimeMs};
 use std::sync::Arc;
 use thiserror::Error;
 
+#[derive(Clone)]
 pub struct Ingestor {
     datasource: Arc<dyn DataSource>,
     repo: Arc<Repository>,

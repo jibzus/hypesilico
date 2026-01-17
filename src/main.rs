@@ -1,5 +1,13 @@
-use hypesilico::{api, config::Config};
+use hypesilico::api::{self, AppState};
+use hypesilico::config::Config;
+use hypesilico::datasource::HyperliquidDataSource;
+use hypesilico::db::init_db;
+use hypesilico::engine::EquityResolver;
+use hypesilico::orchestration::ensure::Ingestor;
+use hypesilico::orchestration::orchestrator::Orchestrator;
+use hypesilico::Repository;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
@@ -20,8 +28,25 @@ async fn main() {
         }
     };
 
+    // Initialize database and app state
+    let pool = match init_db(&config.database_path).await {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Database init error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let repo = Arc::new(Repository::new(pool));
+    let datasource = Arc::new(HyperliquidDataSource::new(config.hyperliquid_api_url.clone()));
+    let ingestor = Ingestor::new(datasource, repo.clone(), config.clone());
+    let orchestrator = Arc::new(Orchestrator::new(ingestor, repo.clone()));
+    let equity_resolver = Arc::new(EquityResolver::new(repo.clone()));
+
+    let state = AppState::new(repo, config.clone(), orchestrator, equity_resolver);
+
     // Create router
-    let app = api::create_router();
+    let app = api::create_router(state);
 
     // Bind to address
     let addr = SocketAddr::from(([127, 0, 0, 1], config.port));

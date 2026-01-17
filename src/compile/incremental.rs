@@ -39,6 +39,22 @@ impl Compiler {
             return Ok(0);
         }
 
+        // Ensure attributions exist for these fills so builder-only tainting can be computed.
+        // Current default: heuristic attribution using builder_fee > 0.
+        let attributions_to_insert: Vec<(String, bool, String, String)> = fills
+            .iter()
+            .map(|f| {
+                let attr = Attribution::from_heuristic(f.builder_fee.as_ref());
+                (
+                    f.fill_key.clone(),
+                    attr.attributed,
+                    "heuristic".to_string(),
+                    "low".to_string(),
+                )
+            })
+            .collect();
+        repo.insert_attributions(&attributions_to_insert).await?;
+
         // Process fills through position tracker
         let mut tracker = PositionTracker::new();
         for fill in &fills {
