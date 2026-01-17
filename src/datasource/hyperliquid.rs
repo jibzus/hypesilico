@@ -326,4 +326,20 @@ mod tests {
         assert_eq!(deposit.tx_hash.as_deref(), Some("0xdeadbeef"));
         assert_eq!(deposit.event_key, "0xdeadbeef");
     }
+
+    #[test]
+    fn test_parse_deposit_amount_fallback() {
+        // Test that `amount` field is used when `delta` is not present
+        let deposit_json = serde_json::json!({
+            "time": 2000,
+            "amount": "500.5",
+            "txHash": "0xcafe"
+        });
+
+        let deposit = parse_deposit(&deposit_json, "0x456").unwrap();
+        assert_eq!(deposit.user, Address::new("0x456".to_string()));
+        assert_eq!(deposit.time_ms, TimeMs::new(2000));
+        assert_eq!(deposit.amount.to_canonical_string(), "500.5");
+        assert_eq!(deposit.tx_hash.as_deref(), Some("0xcafe"));
+    }
 }

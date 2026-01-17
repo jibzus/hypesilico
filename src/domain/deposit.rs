@@ -38,6 +38,13 @@ impl Deposit {
     /// Compute a stable unique key for this event.
     ///
     /// Priority: `tx_hash` (if present) > hash of deterministic fields (user, time_ms, amount).
+    ///
+    /// # Hash Collision Resistance
+    ///
+    /// When `tx_hash` is unavailable, we generate a key by truncating a SHA-256 hash
+    /// to 128 bits (16 bytes). This provides approximately 2^64 collision resistance
+    /// via the birthday bound, which is sufficient for our expected dataset sizes
+    /// (far fewer than 2^32 deposits per user).
     pub fn compute_event_key(
         user: &Address,
         time_ms: TimeMs,
