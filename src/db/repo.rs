@@ -27,6 +27,16 @@ pub struct PnlFillEffect {
     pub closed_pnl: Decimal,
 }
 
+/// Minimal fill effect row for leaderboard aggregation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaderboardFillEffect {
+    pub fill_key: String,
+    pub lifecycle_id: i64,
+    pub notional: Decimal,
+    pub fee: Decimal,
+    pub closed_pnl: Decimal,
+}
+
 /// Repository for database operations.
 pub struct Repository {
     pool: SqlitePool,
@@ -1278,6 +1288,86 @@ impl Repository {
 
                 PnlFillEffect {
                     lifecycle_id,
+                    fee,
+                    closed_pnl,
+                }
+            })
+            .collect())
+    }
+
+    /// Query fill effects for leaderboard aggregation for a user with optional coin/time window.
+    ///
+    /// Filters by raw fill timestamps (time_ms) to support fromMs/toMs semantics.
+    pub async fn query_fill_effects_for_leaderboard(
+        &self,
+        user: &Address,
+        coin: Option<&Coin>,
+        from_ms: Option<TimeMs>,
+        to_ms: Option<TimeMs>,
+    ) -> Result<Vec<LeaderboardFillEffect>, sqlx::Error> {
+        let from_ms = from_ms.unwrap_or(TimeMs::new(0)).as_ms();
+        let to_ms = to_ms.unwrap_or(TimeMs::new(i64::MAX)).as_ms();
+
+        let (sql, binds_coin) = if coin.is_some() {
+            (
+                r#"
+                SELECT fe.fill_key, fe.lifecycle_id, fe.notional, fe.fee, fe.closed_pnl
+                FROM fill_effects fe
+                JOIN raw_fills rf ON rf.fill_key = fe.fill_key
+                JOIN position_lifecycles pl ON pl.id = fe.lifecycle_id
+                WHERE pl.user = ? AND pl.coin = ? AND rf.time_ms >= ? AND rf.time_ms <= ?
+                ORDER BY fe.id ASC
+                "#,
+                true,
+            )
+        } else {
+            (
+                r#"
+                SELECT fe.fill_key, fe.lifecycle_id, fe.notional, fe.fee, fe.closed_pnl
+                FROM fill_effects fe
+                JOIN raw_fills rf ON rf.fill_key = fe.fill_key
+                JOIN position_lifecycles pl ON pl.id = fe.lifecycle_id
+                WHERE pl.user = ? AND rf.time_ms >= ? AND rf.time_ms <= ?
+                ORDER BY fe.id ASC
+                "#,
+                false,
+            )
+        };
+
+        let mut query = sqlx::query(sql).bind(user.as_str());
+        if binds_coin {
+            query = query.bind(coin.expect("binds_coin implies coin is Some").as_str());
+        }
+        query = query.bind(from_ms).bind(to_ms);
+
+        let rows = query.fetch_all(&self.pool).await?;
+
+        Ok(rows
+            .iter()
+            .map(|row| {
+                let fill_key: String = row.get("fill_key");
+                let lifecycle_id: i64 = row.get("lifecycle_id");
+                let notional_str: String = row.get("notional");
+                let fee_str: String = row.get("fee");
+                let closed_pnl_str: String = row.get("closed_pnl");
+
+                let notional = Decimal::from_str(&notional_str).unwrap_or_else(|e| {
+                    warn!(lifecycle_id, notional = %notional_str, error = %e, "Failed to parse notional decimal, using default");
+                    Decimal::default()
+                });
+                let fee = Decimal::from_str(&fee_str).unwrap_or_else(|e| {
+                    warn!(lifecycle_id, fee = %fee_str, error = %e, "Failed to parse fee decimal, using default");
+                    Decimal::default()
+                });
+                let closed_pnl = Decimal::from_str(&closed_pnl_str).unwrap_or_else(|e| {
+                    warn!(lifecycle_id, closed_pnl = %closed_pnl_str, error = %e, "Failed to parse closed_pnl decimal, using default");
+                    Decimal::default()
+                });
+
+                LeaderboardFillEffect {
+                    fill_key,
+                    lifecycle_id,
+                    notional,
                     fee,
                     closed_pnl,
                 }
