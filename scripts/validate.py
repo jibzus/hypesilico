@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Hypesilico Validation Script
 
@@ -305,7 +306,7 @@ def validate_deposits(base_url: str, user: dict, test_name: str, test_config: di
     )
 
 
-def validate_leaderboard(base_url: str, test_config: dict) -> TestResult:
+def validate_leaderboard(base_url: str, test_config: Dict[str, Any]) -> TestResult:
     """Validate /v1/leaderboard endpoint."""
     params = test_config.get("params", {})
     expected = test_config.get("expected", {})
@@ -320,7 +321,7 @@ def validate_leaderboard(base_url: str, test_config: dict) -> TestResult:
             message=f"HTTP {status}: {response}"
         )
 
-    errors = []
+    errors: List[str] = []
 
     # Check is_array
     if expected.get("is_array") and not isinstance(response, list):
@@ -336,6 +337,30 @@ def validate_leaderboard(base_url: str, test_config: dict) -> TestResult:
         name=f"/v1/leaderboard [{description}]",
         passed=passed,
         message="OK" if passed else "; ".join(errors)
+    )
+
+
+def validate_error_endpoint(base_url: str, test_name: str, test_config: Dict[str, Any]) -> TestResult:
+    """Validate that an endpoint returns the expected error status."""
+    endpoint = test_config.get("endpoint", "")
+    params = test_config.get("params", {})
+    expected_status = test_config.get("expected_status", 400)
+    description = test_config.get("description", test_name)
+
+    status, response = make_request(base_url, endpoint, params if params else None)
+
+    passed = status == expected_status
+    if passed:
+        message = "OK"
+    else:
+        message = f"Expected status {expected_status}, got {status}"
+
+    return TestResult(
+        name=f"{endpoint} [{description}]",
+        passed=passed,
+        message=message,
+        expected={"status": expected_status},
+        actual={"status": status, "response": str(response)[:100]}
     )
 
 
@@ -370,6 +395,18 @@ def run_validation(base_url: str, expected_file: str, verbose: bool = False) -> 
     for r in health_results:
         status = "\033[92mPASS\033[0m" if r.passed else "\033[91mFAIL\033[0m"
         print(f"  [{status}] {r.name}: {r.message}")
+
+    # Error/negative tests
+    error_tests = expected.get("error_tests", {})
+    if error_tests:
+        print("\n=== Error Tests (Negative Cases) ===")
+        for test_name, test_config in error_tests.items():
+            r = validate_error_endpoint(base_url, test_name, test_config)
+            all_results.append(r)
+            status = "\033[92mPASS\033[0m" if r.passed else "\033[91mFAIL\033[0m"
+            print(f"  [{status}] {r.name}: {r.message}")
+            if verbose and not r.passed and r.actual:
+                print(f"         Actual: {r.actual}")
 
     # User endpoints
     print("\n=== User Endpoints ===")

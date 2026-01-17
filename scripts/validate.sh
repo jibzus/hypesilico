@@ -190,6 +190,14 @@ else
     SERVER_PID=$!
     log_info "Server started with PID: $SERVER_PID"
 
+    # Check if process is still alive after brief delay
+    sleep 1
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        log_error "Server process died immediately after starting"
+        log_error "Check logs above for startup errors"
+        exit 1
+    fi
+
     # Wait for health
     if ! wait_for_health; then
         log_error "Failed to start server"
