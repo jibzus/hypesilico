@@ -229,6 +229,62 @@ curl "http://localhost:8080/v1/leaderboard?metric=returnPct&builderOnly=true&max
 ]
 ```
 
+### GET /v1/risk
+
+Returns real-time risk metrics for a user's open positions, fetched directly from Hyperliquid's API.
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user` | string | Yes | Wallet address (0x...) |
+
+**Example:**
+
+```bash
+curl "http://localhost:8080/v1/risk?user=0x..."
+```
+
+**Response:**
+
+```json
+{
+  "positions": [
+    {
+      "coin": "BTC",
+      "size": "0.1",
+      "entryPx": "50000.00",
+      "positionValue": "5000.00",
+      "unrealizedPnl": "100.00",
+      "liquidationPx": "45000.00",
+      "leverage": "10",
+      "marginUsed": "500.00",
+      "maxLeverage": "50"
+    }
+  ],
+  "crossMarginSummary": {
+    "accountValue": "10000.00",
+    "totalMarginUsed": "500.00",
+    "totalNtlPos": "5000.00",
+    "totalRawUsd": "10000.00",
+    "withdrawable": "9500.00"
+  }
+}
+```
+
+**Response Fields:**
+
+- `positions`: Array of open positions with risk metrics
+  - `liquidationPx`: Price at which the position would be liquidated
+  - `marginUsed`: Margin allocated to this position
+  - `leverage`: Current leverage for the position
+- `crossMarginSummary`: Account-level margin summary
+  - `accountValue`: Total account value
+  - `totalMarginUsed`: Total margin used across all positions
+  - `withdrawable`: Available balance for withdrawal
+
+**Note:** This endpoint fetches data in real-time from Hyperliquid. It does not use cached/historical data.
+
 ### GET /v1/deposits
 
 Returns deposit history for a user.
@@ -430,3 +486,21 @@ hypesilico/
 - Uses public Hyperliquid APIs
 - Implements retry with exponential backoff
 - Respects rate limits (1200 weight/min)
+
+## Known Limitations
+
+1. **Funding Payments**: Funding payments are **not** included in `realizedPnl` (trading PnL only).
+
+2. **Empty Leaderboard**: The `/v1/leaderboard` endpoint returns an empty array if `LEADERBOARD_USERS` is not configured.
+
+3. **Equity Data**: `returnPct` requires equity snapshot data; returns `"0"` if no equity data is available at the specified `fromMs`.
+
+4. **Builder Logs**: For `logs` attribution mode, builder fill logs must be available at `builder_fills/{TARGET_BUILDER}/{YYYYMMDD}.csv.lz4`.
+
+5. **Risk Fields (liqPx, marginUsed)**: Risk metrics are fetched in real-time from Hyperliquid via `/v1/risk` rather than stored historically. This design choice was made because:
+   - Risk fields are inherently real-time and change constantly with price movements
+   - Storing historical snapshots would be immediately stale and misleading for risk management
+   - The system is designed as a historical trade ledger for competitions, not a real-time risk tracker
+   - Hyperliquid's `clearinghouseState` API already provides accurate, current risk data
+
+   If historical risk metrics are needed for analysis (e.g., "margin utilization during competition"), the architecture can be extended to periodically snapshot this data.

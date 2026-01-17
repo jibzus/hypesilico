@@ -3,6 +3,7 @@ pub mod health;
 pub mod leaderboard;
 pub mod pnl;
 pub mod positions;
+pub mod risk;
 pub mod trades;
 
 use crate::config::Config;
@@ -48,5 +49,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/pnl", get(pnl::get_pnl))
         .route("/v1/deposits", get(deposits::get_deposits))
         .route("/v1/leaderboard", get(leaderboard::get_leaderboard))
+        .route("/v1/risk", get(risk::get_risk))
         .with_state(state)
 }
