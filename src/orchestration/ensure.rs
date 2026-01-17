@@ -146,11 +146,11 @@ mod tests {
     async fn test_ensure_ingested_fetches_and_stores() {
         let user = Address::new("0x123".to_string());
         let coin = Coin::new("BTC".to_string());
-        let ds = Arc::new(MockDataSource::new());
-
-        // Add fills to the mock
-        ds.add_fill(make_test_fill(&user, &coin, 1000, 1));
-        ds.add_fill(make_test_fill(&user, &coin, 2000, 2));
+        let ds = Arc::new(
+            MockDataSource::new()
+                .with_fill(make_test_fill(&user, &coin, 1000, 1))
+                .with_fill(make_test_fill(&user, &coin, 2000, 2)),
+        );
 
         let (repo, _temp) = setup_repo().await;
         let ingestor = Ingestor::new(ds, repo.clone(), test_config(0));
@@ -169,8 +169,9 @@ mod tests {
     async fn test_ensure_ingested_is_idempotent() {
         let user = Address::new("0x123".to_string());
         let coin = Coin::new("BTC".to_string());
-        let ds = Arc::new(MockDataSource::new());
-        ds.add_fill(make_test_fill(&user, &coin, 1000, 1));
+        let ds = Arc::new(
+            MockDataSource::new().with_fill(make_test_fill(&user, &coin, 1000, 1)),
+        );
 
         let (repo, _temp) = setup_repo().await;
         let ingestor = Ingestor::new(ds, repo, test_config(0));
@@ -188,20 +189,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lookback_applied_to_from_time() {
+    async fn test_lookback_applied_to_fetch_from() {
         let user = Address::new("0x123".to_string());
         let coin = Coin::new("BTC".to_string());
         let ds = Arc::new(MockDataSource::new());
 
         let (repo, _temp) = setup_repo().await;
-        let ingestor = Ingestor::new(ds.clone(), repo, test_config(100));
+        let ingestor = Ingestor::new(ds, repo, test_config(100));
 
-        let _ = ingestor
+        let result = ingestor
             .ensure_ingested(&user, Some(&coin), Some(TimeMs::new(1000)), Some(TimeMs::new(2000)))
             .await
             .unwrap();
 
-        // The lookback should have been applied
-        assert_eq!(ds.last_from_ms(), Some(900));
+        // The lookback should have been applied to fetch_from
+        assert_eq!(result.fetch_from.as_ms(), 900);
     }
 }

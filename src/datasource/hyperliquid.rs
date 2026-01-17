@@ -243,10 +243,10 @@ fn parse_fill(
         .and_then(|v| v.as_str())
         .and_then(|s| Decimal::from_str_canonical(s).ok());
 
-    Ok(Fill {
-        user: Address::new(user.to_string()),
-        coin: Coin::new(coin.to_string()),
-        time_ms: TimeMs::new(time_ms),
+    Ok(Fill::new(
+        TimeMs::new(time_ms),
+        Address::new(user.to_string()),
+        Coin::new(coin.to_string()),
         side,
         px,
         sz,
@@ -255,8 +255,7 @@ fn parse_fill(
         builder_fee,
         tid,
         oid,
-        attribution: None,
-    })
+    ))
 }
 
 fn parse_deposit(deposit_json: &serde_json::Value, user: &str) -> Result<Deposit, DataSourceError> {
