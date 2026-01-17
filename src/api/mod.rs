@@ -1,5 +1,6 @@
 pub mod health;
 pub mod positions;
+pub mod trades;
 
 use crate::compile::Compiler;
 use crate::domain::{Address, Coin, TimeMs};
@@ -59,5 +60,6 @@ pub fn create_router(state: AppState) -> Router {
             "/v1/positions/history",
             get(positions::get_positions_history),
         )
+        .route("/v1/trades", get(trades::get_trades))
         .with_state(state)
 }

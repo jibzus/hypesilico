@@ -23,6 +23,8 @@ async fn main() {
         }
     };
 
+    let port = config.port;
+
     // Initialize database and dependencies
     let pool = match init_db(&config.database_path).await {
         Ok(p) => p,
@@ -41,7 +43,7 @@ async fn main() {
     let app = api::create_router(api::AppState { repo, ingestor });
 
     // Bind to address
-    let addr = SocketAddr::from(([127, 0, 0, 1], config.port));
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = match tokio::net::TcpListener::bind(&addr).await {
         Ok(l) => l,
         Err(e) => {
