@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Fill {
     /// Stable unique identifier for this fill.
+    ///
+    /// Invariant: Computed once at construction via `compute_fill_key`.
+    /// The DB read path (`Repository::query_fills`) preserves the stored
+    /// key rather than recomputing, ensuring idempotency.
     pub fill_key: String,
     /// Time of the fill in milliseconds since Unix epoch.
     pub time_ms: TimeMs,
@@ -149,6 +153,9 @@ impl Fill {
         }
 
         let hash = hasher.finalize();
+        // Truncate SHA-256 to 128 bits (16 bytes) for shorter keys.
+        // 128-bit collision resistance is sufficient for deduplication;
+        // this is an identifier, not a security-sensitive hash.
         format!("hash:{}", hex::encode(&hash[..16]))
     }
 
