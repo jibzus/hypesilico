@@ -1,7 +1,7 @@
 //! Mock data source for testing without network calls.
 
 use super::{DataSource, DataSourceError, Deposit};
-use crate::domain::{Address, Decimal, Fill, TimeMs};
+use crate::domain::{Address, Coin, Decimal, Fill, TimeMs};
 use async_trait::async_trait;
 
 /// Mock data source that returns predefined test data.
