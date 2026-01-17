@@ -16,6 +16,19 @@ impl Orchestrator {
         Self { ingestor, repo }
     }
 
+    /// Ensure deposits are ingested for the given user/time range.
+    pub async fn ensure_deposits_ingested(
+        &self,
+        user: &Address,
+        from_ms: Option<TimeMs>,
+        to_ms: Option<TimeMs>,
+    ) -> Result<(), OrchestrationError> {
+        self.ingestor
+            .ensure_deposits_ingested(user, from_ms, to_ms)
+            .await?;
+        Ok(())
+    }
+
     /// Ensure fills are ingested and compiled for the given query window.
     pub async fn ensure_compiled(
         &self,
@@ -48,4 +61,3 @@ pub enum OrchestrationError {
     #[error(transparent)]
     Db(#[from] sqlx::Error),
 }
-
