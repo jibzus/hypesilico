@@ -824,6 +824,93 @@ async fn test_contract_ready_returns_ready() {
 }
 
 // =============================================================================
+// Contract Tests - Error Responses
+// =============================================================================
+
+#[tokio::test]
+async fn test_contract_error_response_invalid_address() {
+    let test_app = setup_test_app(vec![]).await;
+
+    // Invalid address format - handled by our code, returns JSON error
+    let (status, body) = request(test_app.app, "/v1/trades?user=invalid").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json["error"].is_string(), "Error response must have 'error' field");
+    assert!(
+        json["error"].as_str().unwrap().to_lowercase().contains("address") ||
+        json["error"].as_str().unwrap().to_lowercase().contains("user"),
+        "Error message should mention address/user validation"
+    );
+}
+
+#[tokio::test]
+async fn test_contract_error_response_invalid_time_window_deposits() {
+    let test_app = setup_test_app(vec![]).await;
+
+    // fromMs > toMs is invalid - deposits endpoint validates this
+    let (status, body) = request(
+        test_app.app,
+        &format!("/v1/deposits?user={}&fromMs=2000&toMs=1000", TEST_USER),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json["error"].is_string(), "Error response must have 'error' field");
+}
+
+#[tokio::test]
+async fn test_contract_error_response_leaderboard_missing_metric() {
+    let test_app = setup_test_app(vec![]).await;
+
+    // Missing 'metric' parameter - leaderboard validates this in handler
+    let (status, body) = request(test_app.app, "/v1/leaderboard").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json["error"].is_string(), "Error response must have 'error' field");
+    assert!(
+        json["error"].as_str().unwrap().to_lowercase().contains("metric"),
+        "Error message should mention missing metric"
+    );
+}
+
+#[tokio::test]
+async fn test_contract_error_response_leaderboard_invalid_metric() {
+    let test_app = setup_test_app(vec![]).await;
+
+    // Invalid metric value
+    let (status, body) = request(test_app.app, "/v1/leaderboard?metric=invalid").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json["error"].is_string(), "Error response must have 'error' field");
+}
+
+#[tokio::test]
+async fn test_contract_error_response_format_json() {
+    let test_app = setup_test_app(vec![]).await;
+
+    // Test error responses that are handled by our handlers (not Axum's query extractor)
+    // return proper JSON format with 'error' field
+    let error_cases = [
+        ("/v1/trades?user=invalid", "invalid address"),
+        ("/v1/leaderboard?metric=invalid", "invalid metric"),
+        ("/v1/deposits?user=invalid", "invalid address"),
+    ];
+
+    for (endpoint, _case) in error_cases {
+        let (status, body) = request(test_app.app.clone(), endpoint).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "Endpoint {} should return 400", endpoint);
+
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["error"].is_string(), "Error response for {} must have 'error' field", endpoint);
+        assert_all_keys_camel_case(&json, &format!("error response for {}", endpoint));
+    }
+}
+
+// =============================================================================
 // Determinism Tests - All Endpoints
 // =============================================================================
 
@@ -911,7 +998,7 @@ async fn test_determinism_positions_history_endpoint() {
     test_app
         .state
         .repo
-        .insert_fill(&fill(TEST_USER, "BTC", 2000, 2, Side::Sell, "2", "51000", "5", "1000", Some("1")))
+        .insert_fill(&fill(TEST_USER, "BTC", 2000, 2, Side::Sell, "51000", "1", "5", "1000", Some("1")))
         .await
         .unwrap();
 
@@ -1183,13 +1270,39 @@ async fn test_golden_positions_history_response() {
     let actual: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let expected: serde_json::Value = serde_json::from_str(&expected).unwrap();
 
-    // For positions history, we need to compare structure without lifecycle IDs (which are generated)
-    // Compare field presence and types instead of exact values
+    // For positions history, compare all fields except lifecycleId (which is generated/hash-based)
+    let actual_snapshots = actual["snapshots"].as_array().unwrap();
+    let expected_snapshots = expected["snapshots"].as_array().unwrap();
+
     assert_eq!(
-        actual["snapshots"].as_array().unwrap().len(),
-        expected["snapshots"].as_array().unwrap().len(),
+        actual_snapshots.len(),
+        expected_snapshots.len(),
         "Positions history response must have same number of snapshots"
     );
+
+    for (i, (actual_snap, expected_snap)) in actual_snapshots.iter().zip(expected_snapshots.iter()).enumerate() {
+        assert_eq!(
+            actual_snap["timeMs"], expected_snap["timeMs"],
+            "Snapshot {} timeMs must match", i
+        );
+        assert_eq!(
+            actual_snap["coin"], expected_snap["coin"],
+            "Snapshot {} coin must match", i
+        );
+        assert_eq!(
+            actual_snap["netSize"], expected_snap["netSize"],
+            "Snapshot {} netSize must match", i
+        );
+        assert_eq!(
+            actual_snap["avgEntryPx"], expected_snap["avgEntryPx"],
+            "Snapshot {} avgEntryPx must match", i
+        );
+        // lifecycleId is generated (hash-based), so we only verify it exists and is a string
+        assert!(
+            actual_snap["lifecycleId"].is_string(),
+            "Snapshot {} lifecycleId must be a string", i
+        );
+    }
 }
 
 #[tokio::test]
