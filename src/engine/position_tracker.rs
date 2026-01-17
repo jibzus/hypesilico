@@ -310,6 +310,18 @@ impl Default for PositionTracker {
     }
 }
 
+/// Generate a deterministic lifecycle ID from a fill key using SHA256.
+///
+/// # Design Notes
+/// - Uses first 8 bytes of SHA256, masked to 63 bits for positive i64
+/// - Provides ~2^31.5 entries before 50% birthday collision probability
+/// - Acceptable for trading ledgers since lifecycles are scoped per user+coin
+/// - Determinism enables reproducible compilation across runs
+///
+/// # Collision Handling
+/// If two fill_keys ever produce the same ID (extremely unlikely), the DB's
+/// UNIQUE constraint on (user, coin, id) will cause an insert failure,
+/// surfacing the issue immediately rather than silently corrupting data.
 fn lifecycle_id_from_fill_key(fill_key: &str) -> i64 {
     let mut hasher = Sha256::new();
     hasher.update(fill_key.as_bytes());

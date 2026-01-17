@@ -324,3 +324,56 @@ async fn test_leaderboard_builder_only_excludes_tainted_lifecycles() {
     assert_eq!(v[0]["tainted"], true);
 }
 
+#[tokio::test]
+async fn test_leaderboard_empty_users_returns_empty_array() {
+    // No users configured
+    let test_app = setup_test_app(vec![]).await;
+
+    let (status, body) = request(test_app.app, "/v1/leaderboard?metric=volume").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(v.is_array());
+    assert!(v.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_leaderboard_missing_metric_returns_bad_request() {
+    let test_app = setup_test_app(vec![]).await;
+
+    let (status, body) = request(test_app.app, "/v1/leaderboard").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(v["error"].as_str().unwrap().contains("metric is required"));
+}
+
+#[tokio::test]
+async fn test_leaderboard_invalid_metric_returns_bad_request() {
+    let test_app = setup_test_app(vec![]).await;
+
+    let (status, body) = request(test_app.app, "/v1/leaderboard?metric=invalid").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(v["error"]
+        .as_str()
+        .unwrap()
+        .contains("must be one of: volume, pnl, returnPct"));
+}
+
+#[tokio::test]
+async fn test_leaderboard_invalid_time_window_returns_bad_request() {
+    let test_app = setup_test_app(vec![]).await;
+
+    let (status, body) = request(
+        test_app.app,
+        "/v1/leaderboard?metric=volume&fromMs=2000&toMs=1000",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(v["error"].as_str().unwrap().contains("fromMs must be <= toMs"));
+}
+

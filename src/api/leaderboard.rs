@@ -1,5 +1,6 @@
 use axum::extract::{Query, State};
 use axum::Json;
+use futures::future::try_join_all;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -101,41 +102,46 @@ pub async fn get_leaderboard(
         return Ok(Json(Vec::new()));
     }
 
-    let mut metrics = Vec::with_capacity(users.len());
-    for user in users {
-        state
-            .orchestrator
-            .ensure_compiled(&user, coin.as_ref(), from_ms, to_ms)
+    // Process all users in parallel for better performance
+    let user_futures = users.into_iter().map(|user| {
+        let state = state.clone();
+        let coin = coin.clone();
+        async move {
+            state
+                .orchestrator
+                .ensure_compiled(&user, coin.as_ref(), from_ms, to_ms)
+                .await
+                .map_err(|e| {
+                    tracing::error!(user=%user, error=%e, "Compilation failed");
+                    AppError::Internal(format!("Compilation failed: {}", e))
+                })?;
+
+            let effects = state
+                .repo
+                .query_fill_effects_for_leaderboard(&user, coin.as_ref(), from_ms, to_ms)
+                .await
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+
+            let (effects, tainted) = if builder_only {
+                filter_effects_builder_only(&state, effects).await?
+            } else {
+                (effects, false)
+            };
+
+            compute_user_metric(
+                &state,
+                user,
+                effects,
+                tainted,
+                metric,
+                from_ms.unwrap_or(TimeMs::new(0)),
+                max_start_capital,
+            )
             .await
-            .map_err(|e| {
-                tracing::error!(user=%user, error=%e, "Compilation failed");
-                AppError::Internal(format!("Compilation failed: {}", e))
-            })?;
+        }
+    });
 
-        let effects = state
-            .repo
-            .query_fill_effects_for_leaderboard(&user, coin.as_ref(), from_ms, to_ms)
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-
-        let (effects, tainted) = if builder_only {
-            filter_effects_builder_only(&state, effects).await?
-        } else {
-            (effects, false)
-        };
-
-        let user_metric = compute_user_metric(
-            &state,
-            user,
-            effects,
-            tainted,
-            metric,
-            from_ms.unwrap_or(TimeMs::new(0)),
-            max_start_capital,
-        )
-        .await?;
-        metrics.push(user_metric);
-    }
+    let mut metrics: Vec<UserMetric> = try_join_all(user_futures).await?;
 
     metrics.sort_by(|a, b| {
         b.metric_value
