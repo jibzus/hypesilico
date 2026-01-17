@@ -492,8 +492,20 @@ async fn test_taint_with_builder_attribution() {
     let fill2_key = fill2.fill_key().to_string();
 
     repo.insert_attributions(&[
-        (fill1_key, true, "heuristic".to_string(), "low".to_string()),
-        (fill2_key, true, "heuristic".to_string(), "low".to_string()),
+        (
+            fill1_key,
+            true,
+            "heuristic".to_string(),
+            "low".to_string(),
+            None,
+        ),
+        (
+            fill2_key,
+            true,
+            "heuristic".to_string(),
+            "low".to_string(),
+            None,
+        ),
     ])
     .await
     .expect("insert attributions failed");
@@ -538,7 +550,13 @@ async fn test_taint_with_non_builder_fill() {
     // Insert attribution for fill1 (builder-attributed) but NOT for fill2
     let fill1_key = fill1.fill_key().to_string();
 
-    repo.insert_attributions(&[(fill1_key, true, "heuristic".to_string(), "low".to_string())])
+    repo.insert_attributions(&[(
+        fill1_key,
+        true,
+        "heuristic".to_string(),
+        "low".to_string(),
+        None,
+    )])
         .await
         .expect("insert attributions failed");
 

@@ -6,9 +6,11 @@ use std::fmt;
 
 pub mod hyperliquid;
 pub mod mock;
+pub mod builder_logs;
 
 pub use hyperliquid::HyperliquidDataSource;
 pub use mock::MockDataSource;
+pub use builder_logs::{BuilderLogsError, BuilderLogsFetcher, BuilderLogsSource};
 
 /// Data source trait for fetching fills, deposits, and equity information.
 ///

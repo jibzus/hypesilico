@@ -1,7 +1,7 @@
 //! Incremental compilation logic for processing fills and generating derived tables.
 
 use crate::db::Repository;
-use crate::domain::{Address, Attribution, AttributionMode, Coin};
+use crate::domain::{Address, Attribution, AttributionConfidence, AttributionMode, Coin};
 use crate::engine::{PositionTracker, TaintComputer};
 use std::collections::HashMap;
 
@@ -74,17 +74,23 @@ impl Compiler {
 
         // Build attribution map
         let mut attribution_map = HashMap::new();
-        for (fill_key, attributed, mode_str) in attributions_data {
+        for (fill_key, attributed, mode_str, confidence_str, builder_str) in attributions_data {
             let mode = match mode_str.as_str() {
                 "heuristic" => AttributionMode::Heuristic,
                 "logs" => AttributionMode::Logs,
                 _ => AttributionMode::Heuristic,
             };
+            let confidence = match confidence_str.as_str() {
+                "exact" => AttributionConfidence::Exact,
+                "fuzzy" => AttributionConfidence::Fuzzy,
+                "low" => AttributionConfidence::Low,
+                _ => AttributionConfidence::Low,
+            };
             let attribution = Attribution {
                 attributed,
                 mode,
-                confidence: crate::domain::AttributionConfidence::Low,
-                builder: None,
+                confidence,
+                builder: builder_str.map(Address::new),
             };
             attribution_map.insert(fill_key, attribution);
         }

@@ -7,6 +7,7 @@
 //! - Stable fill ordering key helper for deterministic processing
 
 pub mod attribution;
+pub mod builder_logs;
 pub mod decimal;
 pub mod deposit;
 pub mod fill;
@@ -14,6 +15,7 @@ pub mod ordering;
 pub mod primitives;
 
 pub use attribution::{Attribution, AttributionConfidence, AttributionMode, Confidence};
+pub use builder_logs::BuilderLogFill;
 pub use decimal::Decimal;
 pub use deposit::Deposit;
 pub use fill::Fill;
