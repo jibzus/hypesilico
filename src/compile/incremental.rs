@@ -50,6 +50,7 @@ impl Compiler {
             .map(|(fill_key, _attributed, _mode, _confidence, _builder)| fill_key.clone())
             .collect();
 
+        // Build new heuristic attributions for fills that don't have one yet
         let attributions_to_insert: Vec<(String, bool, String, String, Option<String>)> = fills
             .iter()
             .filter(|f| !existing_keys.contains(&f.fill_key))
@@ -65,6 +66,13 @@ impl Compiler {
             })
             .collect();
         repo.insert_attributions(&attributions_to_insert).await?;
+
+        // Combine existing attributions with newly inserted ones (avoid duplicate DB query)
+        let all_attributions: Vec<(String, bool, String, String, Option<String>)> =
+            existing_attributions
+                .into_iter()
+                .chain(attributions_to_insert)
+                .collect();
 
         // Process fills through position tracker
         let mut tracker = PositionTracker::new();
@@ -95,12 +103,9 @@ impl Compiler {
                 .push(effect.lifecycle_id);
         }
 
-        // Query attributions for taint computation
-        let attributions_data = repo.query_attributions(&fill_keys).await?;
-
-        // Build attribution map
+        // Build attribution map from combined data (no duplicate DB query)
         let mut attribution_map = HashMap::new();
-        for (fill_key, attributed, mode_str, confidence_str, builder_str) in attributions_data {
+        for (fill_key, attributed, mode_str, confidence_str, builder_str) in all_attributions {
             let mode = match mode_str.as_str() {
                 "heuristic" => AttributionMode::Heuristic,
                 "logs" => AttributionMode::Logs,
