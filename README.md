@@ -1,0 +1,432 @@
+# Hypesilico - Hyperliquid Trade Ledger API
+
+A Rust service providing trade history, position history, and cumulative PnL APIs for Hyperliquid wallets. Includes builder-only mode for filtering trades attributed to a specific builder.
+
+## Quick Start
+
+### Prerequisites
+
+- Rust 1.75+ (or Docker)
+- Python 3.8+ (for validation scripts)
+
+### Run with Cargo
+
+```bash
+# Set required environment variables
+export DATABASE_PATH=/tmp/ledger.db
+export HYPERLIQUID_API_URL=https://api.hyperliquid.xyz
+export TARGET_BUILDER=0x...
+
+# Build and run
+cargo build --release
+./target/release/hypesilico
+```
+
+### Run with Docker
+
+```bash
+# Set required environment variable
+export TARGET_BUILDER=0x...
+
+# Start the service
+docker compose up
+```
+
+### Verify Installation
+
+```bash
+# Health check
+curl http://localhost:8080/health
+# Returns: ok
+
+# Readiness check
+curl http://localhost:8080/ready
+# Returns: ready
+```
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_PATH` | Yes | - | Path to SQLite database file |
+| `HYPERLIQUID_API_URL` | Yes | - | Hyperliquid API base URL |
+| `TARGET_BUILDER` | Yes | - | Builder address for attribution (0x...) |
+| `PORT` | No | `8080` | HTTP server port |
+| `BUILDER_ATTRIBUTION_MODE` | No | `auto` | Attribution mode: `auto`, `heuristic`, `logs` |
+| `PNL_MODE` | No | `gross` | PnL calculation: `gross` or `net` |
+| `LOOKBACK_MS` | No | `86400000` | Lookback window in ms (24h default) |
+| `LEADERBOARD_USERS` | No | - | Comma-separated user addresses |
+| `LEADERBOARD_USERS_FILE` | No | - | File with user addresses (one per line) |
+
+## API Reference
+
+### Health Endpoints
+
+#### GET /health
+
+Returns server health status.
+
+```bash
+curl http://localhost:8080/health
+# Response: ok
+```
+
+#### GET /ready
+
+Returns server readiness status.
+
+```bash
+curl http://localhost:8080/ready
+# Response: ready
+```
+
+### GET /v1/trades
+
+Returns trade history for a user.
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user` | string | Yes | Wallet address (0x...) |
+| `coin` | string | No | Filter by coin (e.g., BTC) |
+| `fromMs` | integer | No | Start timestamp (ms since epoch) |
+| `toMs` | integer | No | End timestamp (ms since epoch) |
+| `builderOnly` | boolean | No | Only show builder-attributed trades |
+
+**Example:**
+
+```bash
+curl "http://localhost:8080/v1/trades?user=0x..."
+curl "http://localhost:8080/v1/trades?user=0x...&coin=BTC&builderOnly=true"
+```
+
+**Response:**
+
+```json
+{
+  "trades": [
+    {
+      "timeMs": 1704067200000,
+      "coin": "BTC",
+      "side": "buy",
+      "px": "45000.00",
+      "sz": "0.1",
+      "fee": "4.50",
+      "closedPnl": "0",
+      "builder": "0x..."
+    }
+  ],
+  "tainted": false
+}
+```
+
+### GET /v1/pnl
+
+Returns cumulative PnL for a user.
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user` | string | Yes | Wallet address |
+| `coin` | string | No | Filter by coin |
+| `fromMs` | integer | No | Start timestamp |
+| `toMs` | integer | No | End timestamp |
+| `builderOnly` | boolean | No | Only builder-attributed lifecycles |
+| `maxStartCapital` | string | No | Cap for return % calculation |
+
+**Example:**
+
+```bash
+curl "http://localhost:8080/v1/pnl?user=0x..."
+curl "http://localhost:8080/v1/pnl?user=0x...&coin=BTC&fromMs=1704067200000&toMs=1704153600000"
+```
+
+**Response:**
+
+```json
+{
+  "realizedPnl": "1500.25",
+  "returnPct": "15.00",
+  "feesPaid": "45.50",
+  "tradeCount": 25,
+  "tainted": false
+}
+```
+
+### GET /v1/positions/history
+
+Returns position snapshot history.
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user` | string | Yes | Wallet address |
+| `coin` | string | No | Filter by coin |
+| `fromMs` | integer | No | Start timestamp |
+| `toMs` | integer | No | End timestamp |
+| `builderOnly` | boolean | No | Only builder-attributed |
+
+**Example:**
+
+```bash
+curl "http://localhost:8080/v1/positions/history?user=0x..."
+```
+
+**Response:**
+
+```json
+{
+  "snapshots": [
+    {
+      "timeMs": 1704067200000,
+      "coin": "BTC",
+      "netSize": "0.5",
+      "avgEntryPx": "45000.00",
+      "lifecycleId": "1",
+      "tainted": false
+    }
+  ],
+  "tainted": false
+}
+```
+
+### GET /v1/leaderboard
+
+Returns user rankings by metric.
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `metric` | string | Yes | Ranking metric: `pnl`, `volume`, `returnPct` |
+| `coin` | string | No | Filter by coin |
+| `fromMs` | integer | No | Start timestamp |
+| `toMs` | integer | No | End timestamp |
+| `builderOnly` | boolean | No | Only builder-attributed |
+| `maxStartCapital` | string | No | Cap for returnPct calculation |
+
+**Example:**
+
+```bash
+curl "http://localhost:8080/v1/leaderboard?metric=pnl"
+curl "http://localhost:8080/v1/leaderboard?metric=returnPct&builderOnly=true&maxStartCapital=10000"
+```
+
+**Response:**
+
+```json
+[
+  {
+    "rank": 1,
+    "user": "0x...",
+    "metricValue": "5000.00",
+    "tradeCount": 50,
+    "tainted": false
+  }
+]
+```
+
+### GET /v1/deposits
+
+Returns deposit history for a user.
+
+**Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user` | string | Yes | Wallet address |
+| `fromMs` | integer | No | Start timestamp |
+| `toMs` | integer | No | End timestamp |
+
+**Example:**
+
+```bash
+curl "http://localhost:8080/v1/deposits?user=0x..."
+```
+
+**Response:**
+
+```json
+{
+  "totalDeposits": "50000.00",
+  "depositCount": 5,
+  "deposits": [
+    {
+      "timeMs": 1704067200000,
+      "amount": "10000.00",
+      "txHash": "0x..."
+    }
+  ]
+}
+```
+
+## Builder Attribution
+
+### Attribution Modes
+
+The service supports three attribution modes for determining which trades are attributed to the target builder:
+
+1. **`heuristic`**: Uses `builderFee > 0` as the attribution signal. Simple but may have false positives/negatives.
+
+2. **`logs`**: Uses builder fill logs from `builder_fills/{TARGET_BUILDER}/{YYYYMMDD}.csv.lz4`. Most accurate when logs are available.
+
+3. **`auto`** (default): Uses logs when available, falls back to heuristic mode otherwise.
+
+### Taint Rules
+
+When `builderOnly=true` is specified:
+
+- A position lifecycle is "tainted" if **any** fill in that lifecycle lacks builder attribution
+- Tainted lifecycles are completely excluded from builder-only queries
+- The `tainted` field in responses indicates whether any exclusions occurred
+
+This ensures that builder-only metrics only include complete position lifecycles where every trade was attributed to the builder.
+
+## PnL Calculation
+
+### Calculation Formula
+
+```
+realizedPnl = sum(closedPnl)           # Trading PnL only (excludes funding)
+feesPaid = sum(fee)
+
+# With PNL_MODE=net:
+realizedPnl = sum(closedPnl) - feesPaid
+
+effectiveCapital = min(equityAtFromMs, maxStartCapital)
+returnPct = (realizedPnl / effectiveCapital) * 100
+```
+
+### PNL_MODE Options
+
+- **`gross`** (default): `realizedPnl` shows trading PnL only; fees shown separately in `feesPaid`
+- **`net`**: `realizedPnl` = trading PnL minus fees paid
+
+### Notes
+
+- Funding payments are **not** included in `realizedPnl`
+- `tradeCount` reflects the number of fill effects (may differ from raw fill count due to flip handling)
+- `returnPct` requires equity data; returns 0 if no equity snapshot available
+
+## Validation
+
+### Run Validation Harness
+
+```bash
+# Full validation (builds, starts server, runs tests)
+./scripts/validate.sh
+
+# Skip build step
+./scripts/validate.sh --skip-build
+
+# Keep server running after validation
+./scripts/validate.sh --keep-running
+```
+
+### Run Validation Script Directly
+
+```bash
+# Against running server
+python3 scripts/validate.py --base-url http://localhost:8080
+
+# With custom expected file
+python3 scripts/validate.py --expected validation/expected.json -v
+```
+
+### Update Expected Values
+
+Edit `validation/expected.json` to add test wallets and expected values:
+
+```json
+{
+  "test_users": [
+    {
+      "address": "0x...",
+      "description": "Test wallet description",
+      "tests": {
+        "pnl": {
+          "params": {},
+          "expected": {
+            "realizedPnl": "1000.00",
+            "tradeCount": 10
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+## Development
+
+### Run Tests
+
+```bash
+cargo test
+```
+
+### Build Release
+
+```bash
+cargo build --release
+```
+
+### Docker Build
+
+```bash
+docker build -t hypesilico .
+```
+
+## Project Structure
+
+```
+hypesilico/
+├── src/
+│   ├── api/              # HTTP endpoint handlers
+│   ├── compile/          # Incremental data compilation
+│   ├── datasource/       # Hyperliquid API client
+│   ├── db/               # SQLite repository
+│   ├── domain/           # Domain types and models
+│   ├── engine/           # Position tracking, PnL calculation
+│   └── orchestration/    # Request orchestration
+├── tests/                # Integration tests
+├── scripts/              # Validation scripts
+│   ├── validate.sh       # Validation orchestration
+│   └── validate.py       # API validation
+├── validation/           # Golden test data
+│   └── expected.json     # Expected test results
+├── Cargo.toml
+├── Dockerfile
+├── docker-compose.yml
+├── .env.example
+└── README.md
+```
+
+## Technical Details
+
+### Database
+
+- SQLite with WAL mode for concurrent reads
+- Numeric values stored as TEXT for lossless precision
+- Incremental compilation with watermark tracking
+
+### Numeric Precision
+
+- Uses `rust_decimal` crate (not f64) for all calculations
+- Values serialized as canonical decimal strings
+- Avoids floating-point drift in PnL calculations
+
+### Position Lifecycle
+
+- **Start**: `netSize` moves from 0 to non-zero
+- **End**: `netSize` returns to 0
+- **Flip**: Long to Short (or vice versa) treated as close + open
+
+### Data Source
+
+- Uses public Hyperliquid APIs
+- Implements retry with exponential backoff
+- Respects rate limits (1200 weight/min)

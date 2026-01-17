@@ -1,2 +1,7 @@
 /target
 /impdox
+
+# Python
+__pycache__/
+*.pyc
+*.pyo

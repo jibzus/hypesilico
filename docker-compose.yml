@@ -1,0 +1,33 @@
+services:
+  hypesilico:
+    build: .
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      # Persistent database storage
+      - hypesilico-data:/data
+      # Optional: mount builder logs directory
+      # - ./builder_fills:/data/builder_fills:ro
+    environment:
+      # Required
+      - DATABASE_PATH=/data/ledger.db
+      - HYPERLIQUID_API_URL=${HYPERLIQUID_API_URL:-https://api.hyperliquid.xyz}
+      - TARGET_BUILDER=${TARGET_BUILDER:?TARGET_BUILDER is required}
+      # Optional with defaults
+      - PORT=8080
+      - BUILDER_ATTRIBUTION_MODE=${BUILDER_ATTRIBUTION_MODE:-auto}
+      - PNL_MODE=${PNL_MODE:-gross}
+      - LOOKBACK_MS=${LOOKBACK_MS:-86400000}
+      # Leaderboard (optional)
+      - LEADERBOARD_USERS=${LEADERBOARD_USERS:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  hypesilico-data:
+    driver: local
