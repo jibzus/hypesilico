@@ -19,6 +19,7 @@ pub struct AppState {
     pub config: Config,
     pub orchestrator: Arc<Orchestrator>,
     pub equity_resolver: Arc<EquityResolver>,
+    pub http_client: reqwest::Client,
 }
 
 impl AppState {
@@ -33,6 +34,7 @@ impl AppState {
             config,
             orchestrator,
             equity_resolver,
+            http_client: reqwest::Client::new(),
         }
     }
 }

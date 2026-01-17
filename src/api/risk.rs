@@ -1,10 +1,67 @@
 //! Risk fields endpoint - fetches real-time risk data from Hyperliquid.
 
 use crate::api::AppState;
+use crate::domain::Decimal;
 use crate::error::AppError;
 use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
+
+/// Cache entry with timestamp for TTL-based expiration.
+struct CacheEntry {
+    response: RiskResponse,
+    cached_at: Instant,
+}
+
+/// Simple in-memory cache for risk responses.
+/// Keyed by user address with configurable TTL.
+struct RiskCache {
+    entries: RwLock<HashMap<String, CacheEntry>>,
+    ttl: Duration,
+}
+
+impl RiskCache {
+    fn new(ttl_secs: u64) -> Self {
+        Self {
+            entries: RwLock::new(HashMap::new()),
+            ttl: Duration::from_secs(ttl_secs),
+        }
+    }
+
+    async fn get(&self, user: &str) -> Option<RiskResponse> {
+        let entries = self.entries.read().await;
+        if let Some(entry) = entries.get(user) {
+            if entry.cached_at.elapsed() < self.ttl {
+                return Some(entry.response.clone());
+            }
+        }
+        None
+    }
+
+    async fn set(&self, user: String, response: RiskResponse) {
+        let mut entries = self.entries.write().await;
+        entries.insert(
+            user,
+            CacheEntry {
+                response,
+                cached_at: Instant::now(),
+            },
+        );
+        // Cleanup old entries (simple eviction)
+        entries.retain(|_, entry| entry.cached_at.elapsed() < self.ttl * 2);
+    }
+}
+
+/// Global cache instance with 5-second TTL for rate limiting protection.
+static RISK_CACHE: OnceLock<RiskCache> = OnceLock::new();
+
+fn get_cache() -> &'static RiskCache {
+    RISK_CACHE.get_or_init(|| RiskCache::new(5))
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,14 +69,14 @@ pub struct RiskQuery {
     pub user: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RiskResponse {
     pub positions: Vec<PositionRisk>,
     pub cross_margin_summary: CrossMarginSummary,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PositionRisk {
     pub coin: String,
@@ -33,7 +90,7 @@ pub struct PositionRisk {
     pub max_leverage: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CrossMarginSummary {
     pub account_value: String,
@@ -54,16 +111,31 @@ pub async fn get_risk(
         return Err(AppError::BadRequest("Invalid user address".into()));
     }
 
+    // Check cache first for rate limiting protection
+    let cache = get_cache();
+    if let Some(cached) = cache.get(user).await {
+        return Ok(Json(cached));
+    }
+
     // Fetch live user state from Hyperliquid
-    let user_state = fetch_user_state(&state.config.hyperliquid_api_url, user)
+    let user_state = fetch_user_state(&state.http_client, &state.config.hyperliquid_api_url, user)
         .await
-        .map_err(|e| AppError::Internal(format!("Failed to fetch user state: {}", e)))?;
+        .map_err(|e| {
+            tracing::error!("Failed to fetch user state for {}: {}", user, e);
+            AppError::Internal("Failed to fetch risk data from upstream".into())
+        })?;
+
+    // Cache the response
+    cache.set(user.clone(), user_state.clone()).await;
 
     Ok(Json(user_state))
 }
 
-async fn fetch_user_state(base_url: &str, user: &str) -> Result<RiskResponse, String> {
-    let client = reqwest::Client::new();
+async fn fetch_user_state(
+    client: &reqwest::Client,
+    base_url: &str,
+    user: &str,
+) -> Result<RiskResponse, String> {
     let url = format!("{}/info", base_url);
 
     let payload = serde_json::json!({
@@ -129,18 +201,21 @@ fn parse_user_state(json: &serde_json::Value) -> Result<RiskResponse, String> {
 
     if let Some(asset_positions) = json.get("assetPositions").and_then(|v| v.as_array()) {
         for asset_pos in asset_positions {
-            let position = asset_pos.get("position");
-            if position.is_none() {
+            let Some(position) = asset_pos.get("position") else {
                 continue;
-            }
-            let position = position.unwrap();
+            };
 
-            // Skip positions with zero size
-            let size = position
+            // Skip positions with zero size (using Decimal for accurate comparison)
+            let size_str = position
                 .get("szi")
                 .and_then(|v| v.as_str())
                 .unwrap_or("0");
-            if size == "0" || size == "0.0" {
+
+            let is_zero = Decimal::from_str_canonical(size_str)
+                .map(|d| d.is_zero())
+                .unwrap_or(true);
+
+            if is_zero {
                 continue;
             }
 
@@ -193,14 +268,11 @@ fn parse_user_state(json: &serde_json::Value) -> Result<RiskResponse, String> {
             let max_leverage = position
                 .get("maxLeverage")
                 .and_then(|v| v.as_str())
-                .or_else(|| {
-                    position.get("maxTradeSzs").and_then(|v| v.as_str())
-                })
                 .map(|s| s.to_string());
 
             positions.push(PositionRisk {
                 coin,
-                size: size.to_string(),
+                size: size_str.to_string(),
                 entry_px,
                 position_value,
                 unrealized_pnl,
@@ -273,5 +345,131 @@ mod tests {
         assert_eq!(result.positions[0].size, "0.1");
         assert_eq!(result.positions[0].liquidation_px, Some("45000".to_string()));
         assert_eq!(result.positions[0].leverage, Some("10".to_string()));
+    }
+
+    #[test]
+    fn test_parse_user_state_with_flat_leverage() {
+        let json = serde_json::json!({
+            "marginSummary": {
+                "accountValue": "10000",
+                "totalMarginUsed": "500",
+                "totalNtlPos": "5000",
+                "totalRawUsd": "10000",
+                "withdrawable": "9500"
+            },
+            "assetPositions": [
+                {
+                    "position": {
+                        "coin": "ETH",
+                        "szi": "1.5",
+                        "entryPx": "3000",
+                        "positionValue": "4500",
+                        "unrealizedPnl": "50",
+                        "liquidationPx": "2700",
+                        "leverage": "5",
+                        "marginUsed": "900"
+                    }
+                }
+            ]
+        });
+
+        let result = parse_user_state(&json).unwrap();
+        assert_eq!(result.positions.len(), 1);
+        assert_eq!(result.positions[0].coin, "ETH");
+        assert_eq!(result.positions[0].leverage, Some("5".to_string()));
+    }
+
+    #[test]
+    fn test_parse_user_state_skips_zero_positions() {
+        let json = serde_json::json!({
+            "marginSummary": {
+                "accountValue": "10000",
+                "totalMarginUsed": "0",
+                "totalNtlPos": "0",
+                "totalRawUsd": "10000",
+                "withdrawable": "10000"
+            },
+            "assetPositions": [
+                {
+                    "position": {
+                        "coin": "BTC",
+                        "szi": "0",
+                        "entryPx": "0",
+                        "positionValue": "0",
+                        "unrealizedPnl": "0",
+                        "marginUsed": "0"
+                    }
+                },
+                {
+                    "position": {
+                        "coin": "ETH",
+                        "szi": "0.0",
+                        "entryPx": "0",
+                        "positionValue": "0",
+                        "unrealizedPnl": "0",
+                        "marginUsed": "0"
+                    }
+                },
+                {
+                    "position": {
+                        "coin": "SOL",
+                        "szi": "0.00",
+                        "entryPx": "0",
+                        "positionValue": "0",
+                        "unrealizedPnl": "0",
+                        "marginUsed": "0"
+                    }
+                },
+                {
+                    "position": {
+                        "coin": "DOGE",
+                        "szi": "100",
+                        "entryPx": "0.1",
+                        "positionValue": "10",
+                        "unrealizedPnl": "1",
+                        "marginUsed": "5"
+                    }
+                }
+            ]
+        });
+
+        let result = parse_user_state(&json).unwrap();
+        // Only DOGE should be included (non-zero size)
+        assert_eq!(result.positions.len(), 1);
+        assert_eq!(result.positions[0].coin, "DOGE");
+        assert_eq!(result.positions[0].size, "100");
+    }
+
+    #[test]
+    fn test_parse_user_state_missing_position_field() {
+        let json = serde_json::json!({
+            "marginSummary": {
+                "accountValue": "10000",
+                "totalMarginUsed": "500",
+                "totalNtlPos": "5000",
+                "totalRawUsd": "10000",
+                "withdrawable": "9500"
+            },
+            "assetPositions": [
+                {
+                    // Missing "position" field - should be skipped
+                    "type": "someOtherType"
+                },
+                {
+                    "position": {
+                        "coin": "BTC",
+                        "szi": "0.1",
+                        "entryPx": "50000",
+                        "positionValue": "5000",
+                        "unrealizedPnl": "100",
+                        "marginUsed": "500"
+                    }
+                }
+            ]
+        });
+
+        let result = parse_user_state(&json).unwrap();
+        assert_eq!(result.positions.len(), 1);
+        assert_eq!(result.positions[0].coin, "BTC");
     }
 }
