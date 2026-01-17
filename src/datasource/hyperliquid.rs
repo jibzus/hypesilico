@@ -1,7 +1,7 @@
 //! Hyperliquid API client implementation.
 
-use super::{DataSource, DataSourceError, Deposit};
-use crate::domain::{Address, Coin, Decimal, Fill, Side, TimeMs};
+use super::{DataSource, DataSourceError};
+use crate::domain::{Address, Coin, Decimal, Deposit, Fill, Side, TimeMs};
 use async_trait::async_trait;
 use backoff::future::retry;
 use backoff::ExponentialBackoff;
@@ -265,24 +265,25 @@ fn parse_deposit(deposit_json: &serde_json::Value, user: &str) -> Result<Deposit
         .ok_or_else(|| DataSourceError::ParseError("Missing time field".to_string()))?;
 
     let amount_str = deposit_json
-        .get("amount")
+        .get("delta")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| DataSourceError::ParseError("Missing amount field".to_string()))?;
+        .or_else(|| deposit_json.get("amount").and_then(|v| v.as_str()))
+        .ok_or_else(|| DataSourceError::ParseError("Missing delta/amount field".to_string()))?;
     let amount = Decimal::from_str_canonical(amount_str)
         .map_err(|e| DataSourceError::ParseError(format!("Invalid amount: {}", e)))?;
 
-    let coin = deposit_json
-        .get("coin")
+    let tx_hash = deposit_json
+        .get("hash")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| DataSourceError::ParseError("Missing coin field".to_string()))?
-        .to_string();
+        .or_else(|| deposit_json.get("txHash").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
 
-    Ok(Deposit {
-        user: Address::new(user.to_string()),
-        time_ms: TimeMs::new(time_ms),
+    Ok(Deposit::new(
+        Address::new(user.to_string()),
+        TimeMs::new(time_ms),
         amount,
-        coin: Coin::new(coin),
-    })
+        tx_hash,
+    ))
 }
 
 #[cfg(test)]
@@ -315,13 +316,14 @@ mod tests {
     fn test_parse_deposit_valid() {
         let deposit_json = serde_json::json!({
             "time": 1000,
-            "amount": "1000",
-            "coin": "USDC"
+            "delta": "1000",
+            "hash": "0xdeadbeef"
         });
 
         let deposit = parse_deposit(&deposit_json, "0x123").unwrap();
         assert_eq!(deposit.user, Address::new("0x123".to_string()));
         assert_eq!(deposit.time_ms, TimeMs::new(1000));
-        assert_eq!(deposit.coin, Coin::new("USDC".to_string()));
+        assert_eq!(deposit.tx_hash.as_deref(), Some("0xdeadbeef"));
+        assert_eq!(deposit.event_key, "0xdeadbeef");
     }
 }

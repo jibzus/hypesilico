@@ -1,6 +1,6 @@
 //! Repository layer for database operations.
 
-use crate::domain::{Address, Coin, Decimal, Fill, Side, TimeMs};
+use crate::domain::{Address, Coin, Decimal, Deposit, Fill, Side, TimeMs};
 use crate::engine::{Effect, EffectType, Lifecycle, Snapshot};
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
@@ -101,6 +101,124 @@ impl Repository {
 
         tx.commit().await?;
         Ok(total_inserted)
+    }
+
+    /// Insert a deposit into the database idempotently.
+    ///
+    /// # Errors
+    /// Returns an error if the insert fails.
+    pub async fn insert_deposit(&self, deposit: &Deposit) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            INSERT INTO deposits (user, time_ms, amount, tx_hash, event_key)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(event_key) DO NOTHING
+            "#,
+        )
+        .bind(deposit.user.as_str())
+        .bind(deposit.time_ms.as_i64())
+        .bind(deposit.amount.to_canonical_string())
+        .bind(deposit.tx_hash.as_deref())
+        .bind(deposit.event_key.as_str())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Insert multiple deposits in a single transaction for better performance.
+    ///
+    /// Returns the number of newly inserted deposits (excludes duplicates).
+    ///
+    /// # Errors
+    /// Returns an error if the transaction fails.
+    pub async fn insert_deposits_batch(&self, deposits: &[Deposit]) -> Result<usize, sqlx::Error> {
+        if deposits.is_empty() {
+            return Ok(0);
+        }
+
+        let mut total_inserted = 0usize;
+        let mut tx = self.pool.begin().await?;
+
+        for deposit in deposits {
+            let result = sqlx::query(
+                r#"
+                INSERT INTO deposits (user, time_ms, amount, tx_hash, event_key)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(event_key) DO NOTHING
+                "#,
+            )
+            .bind(deposit.user.as_str())
+            .bind(deposit.time_ms.as_i64())
+            .bind(deposit.amount.to_canonical_string())
+            .bind(deposit.tx_hash.as_deref())
+            .bind(deposit.event_key.as_str())
+            .execute(&mut *tx)
+            .await?;
+
+            if result.rows_affected() > 0 {
+                total_inserted += 1;
+            }
+        }
+
+        tx.commit().await?;
+        Ok(total_inserted)
+    }
+
+    /// Query deposits for a user within a time range.
+    ///
+    /// # Errors
+    /// Returns an error if the query fails.
+    pub async fn query_deposits(
+        &self,
+        user: &Address,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<Vec<Deposit>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT user, time_ms, amount, tx_hash, event_key
+            FROM deposits
+            WHERE user = ? AND time_ms >= ? AND time_ms <= ?
+            ORDER BY time_ms ASC, event_key ASC
+            "#,
+        )
+        .bind(user.as_str())
+        .bind(from_ms)
+        .bind(to_ms)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let deposits = rows
+            .iter()
+            .map(|row| {
+                let user: String = row.get("user");
+                let time_ms: i64 = row.get("time_ms");
+                let amount_str: String = row.get("amount");
+                let tx_hash: Option<String> = row.get("tx_hash");
+                let event_key: String = row.get("event_key");
+
+                let amount = Decimal::from_str(&amount_str).unwrap_or_else(|e| {
+                    warn!(
+                        event_key = %event_key,
+                        amount = %amount_str,
+                        error = %e,
+                        "Failed to parse deposit amount decimal, using default"
+                    );
+                    Decimal::default()
+                });
+
+                Deposit {
+                    event_key,
+                    user: Address::new(user),
+                    time_ms: TimeMs::new(time_ms),
+                    amount,
+                    tx_hash,
+                }
+            })
+            .collect();
+
+        Ok(deposits)
     }
 
     /// Query raw fills for a user and coin within a time range.
@@ -863,6 +981,7 @@ impl Repository {
 mod tests {
     use super::*;
     use crate::db::migrations::init_db;
+    use crate::domain::Deposit;
     use tempfile::TempDir;
 
     async fn setup_test_db() -> (Repository, TempDir) {
@@ -1160,5 +1279,49 @@ mod tests {
 
         let inserted = repo.insert_fills_batch(&[]).await.unwrap();
         assert_eq!(inserted, 0);
+    }
+
+    #[tokio::test]
+    async fn test_insert_and_query_deposits_time_range() {
+        let (repo, _temp) = setup_test_db().await;
+
+        let user = Address::new("0x123".to_string());
+        let d1 = Deposit::new(
+            user.clone(),
+            TimeMs::new(1000),
+            Decimal::from_str("10").unwrap(),
+            Some("0xaaa".to_string()),
+        );
+        let d2 = Deposit::new(
+            user.clone(),
+            TimeMs::new(2000),
+            Decimal::from_str("20").unwrap(),
+            Some("0xbbb".to_string()),
+        );
+        repo.insert_deposits_batch(&[d1.clone(), d2.clone()])
+            .await
+            .unwrap();
+
+        let results = repo.query_deposits(&user, 1500, 2500).await.unwrap();
+        assert_eq!(results, vec![d2]);
+    }
+
+    #[tokio::test]
+    async fn test_insert_duplicate_deposit_ignored() {
+        let (repo, _temp) = setup_test_db().await;
+
+        let user = Address::new("0x123".to_string());
+        let deposit = Deposit::new(
+            user,
+            TimeMs::new(1000),
+            Decimal::from_str("10").unwrap(),
+            Some("0xaaa".to_string()),
+        );
+
+        let inserted1 = repo.insert_deposit(&deposit).await.unwrap();
+        let inserted2 = repo.insert_deposit(&deposit).await.unwrap();
+
+        assert!(inserted1);
+        assert!(!inserted2);
     }
 }

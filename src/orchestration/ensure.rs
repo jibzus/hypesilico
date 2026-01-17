@@ -56,6 +56,34 @@ impl Ingestor {
         })
     }
 
+    /// Ensure deposits are ingested for the given user/time range.
+    ///
+    /// Implements window correctness via `LOOKBACK_MS`.
+    pub async fn ensure_deposits_ingested(
+        &self,
+        user: &Address,
+        from_ms: Option<TimeMs>,
+        to_ms: Option<TimeMs>,
+    ) -> Result<DepositIngestionResult, IngestionError> {
+        let fetch_from = self.compute_fetch_start(user, None, from_ms).await?;
+        let fetch_to = to_ms.unwrap_or_else(TimeMs::now);
+
+        let deposits = self
+            .datasource
+            .fetch_deposits(user.as_str(), fetch_from.as_ms(), fetch_to.as_ms())
+            .await?;
+
+        let deposits_fetched = deposits.len();
+        let deposits_new = self.repo.insert_deposits_batch(&deposits).await?;
+
+        Ok(DepositIngestionResult {
+            deposits_fetched,
+            deposits_new,
+            fetch_from,
+            fetch_to,
+        })
+    }
+
     async fn compute_fetch_start(
         &self,
         _user: &Address,      // TODO(PR-XXX): Use for per-user watermark lookups
@@ -85,6 +113,14 @@ pub struct IngestionResult {
     pub fetch_to: TimeMs,
 }
 
+#[derive(Debug)]
+pub struct DepositIngestionResult {
+    pub deposits_fetched: usize,
+    pub deposits_new: usize,
+    pub fetch_from: TimeMs,
+    pub fetch_to: TimeMs,
+}
+
 #[derive(Debug, Error)]
 pub enum IngestionError {
     #[error(transparent)]
@@ -98,7 +134,7 @@ mod tests {
     use super::*;
     use crate::datasource::MockDataSource;
     use crate::db::migrations::init_db;
-    use crate::domain::{Address, Coin, Decimal, Fill, Side, TimeMs};
+    use crate::domain::{Address, Coin, Decimal, Deposit, Fill, Side, TimeMs};
     use std::str::FromStr;
     use tempfile::TempDir;
 
@@ -142,6 +178,15 @@ mod tests {
         )
     }
 
+    fn make_test_deposit(user: &Address, time_ms: i64, amount: &str, tx_hash: &str) -> Deposit {
+        Deposit::new(
+            user.clone(),
+            TimeMs::new(time_ms),
+            Decimal::from_str(amount).unwrap(),
+            Some(tx_hash.to_string()),
+        )
+    }
+
     #[tokio::test]
     async fn test_ensure_ingested_fetches_and_stores() {
         let user = Address::new("0x123".to_string());
@@ -166,6 +211,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_ensure_deposits_ingested_fetches_and_stores() {
+        let user = Address::new("0x123".to_string());
+        let ds = Arc::new(
+            MockDataSource::new()
+                .with_deposit(make_test_deposit(&user, 1000, "10", "0xaaa"))
+                .with_deposit(make_test_deposit(&user, 2000, "20", "0xbbb")),
+        );
+
+        let (repo, _temp) = setup_repo().await;
+        let ingestor = Ingestor::new(ds, repo.clone(), test_config(0));
+
+        let result = ingestor
+            .ensure_deposits_ingested(&user, None, None)
+            .await
+            .unwrap();
+        assert_eq!(result.deposits_new, 2);
+
+        let deposits = repo.query_deposits(&user, 0, 10_000).await.unwrap();
+        assert_eq!(deposits.len(), 2);
+    }
+
+    #[tokio::test]
     async fn test_ensure_ingested_is_idempotent() {
         let user = Address::new("0x123".to_string());
         let coin = Coin::new("BTC".to_string());
@@ -184,6 +251,31 @@ mod tests {
             .unwrap();
 
         assert_eq!(result2.fills_new, 0, "Second run should insert nothing new");
+    }
+
+    #[tokio::test]
+    async fn test_ensure_deposits_ingested_is_idempotent() {
+        let user = Address::new("0x123".to_string());
+        let ds = Arc::new(
+            MockDataSource::new().with_deposit(make_test_deposit(&user, 1000, "10", "0xaaa")),
+        );
+
+        let (repo, _temp) = setup_repo().await;
+        let ingestor = Ingestor::new(ds, repo, test_config(0));
+
+        ingestor
+            .ensure_deposits_ingested(&user, None, None)
+            .await
+            .unwrap();
+        let result2 = ingestor
+            .ensure_deposits_ingested(&user, None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result2.deposits_new, 0,
+            "Second run should insert nothing new"
+        );
     }
 
     #[tokio::test]
@@ -206,6 +298,22 @@ mod tests {
             .unwrap();
 
         // The lookback should have been applied to fetch_from
+        assert_eq!(result.fetch_from.as_ms(), 900);
+    }
+
+    #[tokio::test]
+    async fn test_deposits_lookback_applied_to_fetch_from() {
+        let user = Address::new("0x123".to_string());
+        let ds = Arc::new(MockDataSource::new());
+
+        let (repo, _temp) = setup_repo().await;
+        let ingestor = Ingestor::new(ds, repo, test_config(100));
+
+        let result = ingestor
+            .ensure_deposits_ingested(&user, Some(TimeMs::new(1000)), Some(TimeMs::new(2000)))
+            .await
+            .unwrap();
+
         assert_eq!(result.fetch_from.as_ms(), 900);
     }
 }
