@@ -16,4 +16,4 @@ pub use attribution::{Attribution, AttributionConfidence, AttributionMode, Confi
 pub use decimal::Decimal;
 pub use fill::Fill;
 pub use ordering::FillOrderingKey;
-pub use primitives::{Address, Coin, Side, TimeMs};
+pub use primitives::{Address, AddressParseError, Coin, Side, TimeMs};

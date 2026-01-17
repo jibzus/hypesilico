@@ -1,21 +1,12 @@
 use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 use crate::api::AppState;
 use crate::config::PnlMode;
 use crate::domain::{Address, Coin, Decimal, TimeMs};
 use crate::error::AppError;
-
-fn parse_user_address(input: &str) -> Result<Address, AppError> {
-    if !input.starts_with("0x") || input.len() < 3 {
-        return Err(AppError::BadRequest("Invalid user address".to_string()));
-    }
-    if !input[2..].chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(AppError::BadRequest("Invalid user address".to_string()));
-    }
-    Ok(Address::new(input.to_string()))
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,7 +34,8 @@ pub async fn get_pnl(
     Query(params): Query<PnlQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<PnlResponse>, AppError> {
-    let user = parse_user_address(&params.user)?;
+    let user = Address::from_str(&params.user)
+        .map_err(|_| AppError::BadRequest("Invalid user address".into()))?;
 
     let coin = params
         .coin
@@ -73,7 +65,10 @@ pub async fn get_pnl(
         .orchestrator
         .ensure_compiled(&user, coin.as_ref(), from_ms, to_ms)
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!(user=%user, error=%e, "Compilation failed");
+            AppError::Internal(format!("Compilation failed: {}", e))
+        })?;
 
     let effects = state
         .repo
@@ -138,8 +133,7 @@ pub async fn get_pnl(
     let return_pct = if effective_capital.is_zero() {
         Decimal::zero()
     } else {
-        let hundred = Decimal::from_str_canonical("100").expect("100 is a valid decimal");
-        (realized_pnl / effective_capital) * hundred
+        (realized_pnl / effective_capital) * Decimal::hundred()
     };
 
     Ok(Json(PnlResponse {

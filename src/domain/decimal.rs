@@ -66,6 +66,11 @@ impl Decimal {
     pub fn abs(&self) -> Self {
         Decimal(self.0.abs())
     }
+
+    /// Returns the value 100.
+    pub fn hundred() -> Self {
+        Decimal(RustDecimal::ONE_HUNDRED)
+    }
 }
 
 impl fmt::Display for Decimal {

@@ -1024,6 +1024,13 @@ impl Repository {
     }
 
     /// Sum deposits up to and including `at_ms`.
+    ///
+    /// # Implementation Note
+    ///
+    /// We iterate in Rust to preserve decimal precision. SQLite's SUM aggregate
+    /// function returns REAL (float), which would lose precision for financial
+    /// calculations. By fetching rows and summing with our Decimal type, we
+    /// maintain lossless arithmetic.
     pub async fn sum_deposits_up_to(
         &self,
         user: &Address,
@@ -1056,6 +1063,13 @@ impl Repository {
     }
 
     /// Sum realized PnL strictly before `at_ms` from fill effects (excludes funding).
+    ///
+    /// # Implementation Note
+    ///
+    /// We iterate in Rust to preserve decimal precision. SQLite's SUM aggregate
+    /// function returns REAL (float), which would lose precision for financial
+    /// calculations. By fetching rows and summing with our Decimal type, we
+    /// maintain lossless arithmetic.
     pub async fn sum_realized_pnl_before(
         &self,
         user: &Address,
