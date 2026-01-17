@@ -3,6 +3,7 @@ pub mod config;
 pub mod datasource;
 pub mod db;
 pub mod domain;
+pub mod engine;
 pub mod error;
 
 pub use config::Config;

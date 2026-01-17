@@ -41,6 +41,31 @@ impl Decimal {
     pub fn inner(&self) -> RustDecimal {
         self.0
     }
+
+    /// The additive identity (0).
+    pub fn zero() -> Self {
+        Decimal(RustDecimal::ZERO)
+    }
+
+    /// Returns true if the value is exactly zero.
+    pub fn is_zero(&self) -> bool {
+        self.0.is_zero()
+    }
+
+    /// Returns true if the value is > 0.
+    pub fn is_positive(&self) -> bool {
+        !self.is_zero() && self.0.is_sign_positive()
+    }
+
+    /// Returns true if the value is < 0.
+    pub fn is_negative(&self) -> bool {
+        !self.is_zero() && self.0.is_sign_negative()
+    }
+
+    /// Absolute value.
+    pub fn abs(&self) -> Self {
+        Decimal(self.0.abs())
+    }
 }
 
 impl fmt::Display for Decimal {
@@ -99,6 +124,14 @@ impl std::ops::Div for Decimal {
 
     fn div(self, rhs: Decimal) -> Decimal {
         Decimal(self.0 / rhs.0)
+    }
+}
+
+impl std::ops::Neg for Decimal {
+    type Output = Decimal;
+
+    fn neg(self) -> Decimal {
+        Decimal(-self.0)
     }
 }
 
