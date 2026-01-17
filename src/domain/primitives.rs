@@ -1,6 +1,7 @@
 //! Domain primitives: TimeMs, Address, Coin, Side.
 
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 /// Time in milliseconds since Unix epoch.
 #[derive(
@@ -46,6 +47,24 @@ impl Address {
     }
 }
 
+impl FromStr for Address {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim();
+        if s.len() != 42 {
+            return Err("expected 42-character 0x-prefixed address");
+        }
+        if !s.starts_with("0x") && !s.starts_with("0X") {
+            return Err("expected 0x prefix");
+        }
+        if !s[2..].chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err("expected hex address");
+        }
+        Ok(Address::new(s.to_string()))
+    }
+}
+
 impl std::fmt::Display for Address {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -65,6 +84,18 @@ impl Coin {
     /// Get the coin as a string reference.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl FromStr for Coin {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim();
+        if s.is_empty() {
+            return Err("coin cannot be empty");
+        }
+        Ok(Coin::new(s.to_string()))
     }
 }
 
