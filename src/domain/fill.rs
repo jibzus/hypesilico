@@ -105,7 +105,7 @@ impl Fill {
         oid: Option<i64>,
     ) -> String {
         if let Some(tid) = tid {
-            return format!("tid:{}", tid);
+            return format!("{}:{}:tid:{}", user.as_str(), coin.as_str(), tid);
         }
 
         use sha2::{Digest, Sha256};
@@ -184,7 +184,60 @@ mod tests {
             Some(12345),
             Some(999),
         );
-        assert_eq!(key, "tid:12345");
+        assert_eq!(key, "0x123:BTC:tid:12345");
+    }
+
+    #[test]
+    fn test_fill_key_with_tid_scoped_by_user_and_coin() {
+        let px = Decimal::from_str("50000").unwrap();
+        let sz = Decimal::from_str("1.5").unwrap();
+        let fee = Decimal::from_str("10").unwrap();
+        let pnl = Decimal::from_str("0").unwrap();
+
+        // Same tid, different users
+        let key1 = Fill::compute_fill_key(
+            &Address::new("0xAAA".to_string()),
+            &Coin::new("BTC".to_string()),
+            TimeMs::new(1000),
+            Side::Buy,
+            &px,
+            &sz,
+            &fee,
+            &pnl,
+            None,
+            Some(999),
+            None,
+        );
+        let key2 = Fill::compute_fill_key(
+            &Address::new("0xBBB".to_string()),
+            &Coin::new("BTC".to_string()),
+            TimeMs::new(1000),
+            Side::Buy,
+            &px,
+            &sz,
+            &fee,
+            &pnl,
+            None,
+            Some(999),
+            None,
+        );
+        assert_ne!(key1, key2, "Same tid but different users must produce different keys");
+
+        // Same tid, same user, different coins
+        let key3 = Fill::compute_fill_key(
+            &Address::new("0xAAA".to_string()),
+            &Coin::new("ETH".to_string()),
+            TimeMs::new(1000),
+            Side::Buy,
+            &px,
+            &sz,
+            &fee,
+            &pnl,
+            None,
+            Some(999),
+            None,
+        );
+        assert_ne!(key1, key3, "Same tid but different coins must produce different keys");
     }
 
     #[test]
