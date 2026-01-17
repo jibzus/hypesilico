@@ -110,21 +110,44 @@ impl Fill {
 
         use sha2::{Digest, Sha256};
 
+        // Helper to write length-prefixed variable-length data
+        fn hash_var(hasher: &mut Sha256, data: &str) {
+            hasher.update((data.len() as u32).to_le_bytes());
+            hasher.update(data.as_bytes());
+        }
+
         let mut hasher = Sha256::new();
-        hasher.update(user.as_str());
-        hasher.update(coin.as_str());
+
+        // Variable-length fields: prefix with length to avoid boundary collisions
+        hash_var(&mut hasher, user.as_str());
+        hash_var(&mut hasher, coin.as_str());
+
+        // Fixed-width fields: no prefix needed
         hasher.update(time_ms.as_ms().to_le_bytes());
         hasher.update(if side == Side::Buy { b"B" } else { b"S" });
-        hasher.update(px.to_canonical_string());
-        hasher.update(sz.to_canonical_string());
-        hasher.update(fee.to_canonical_string());
-        hasher.update(closed_pnl.to_canonical_string());
-        if let Some(bf) = builder_fee {
-            hasher.update(bf.to_canonical_string());
+
+        // Decimal strings: length-prefixed
+        hash_var(&mut hasher, &px.to_canonical_string());
+        hash_var(&mut hasher, &sz.to_canonical_string());
+        hash_var(&mut hasher, &fee.to_canonical_string());
+        hash_var(&mut hasher, &closed_pnl.to_canonical_string());
+
+        // Optional fields: presence marker (0/1) + value if present
+        match builder_fee {
+            Some(bf) => {
+                hasher.update([1u8]);
+                hash_var(&mut hasher, &bf.to_canonical_string());
+            }
+            None => hasher.update([0u8]),
         }
-        if let Some(oid) = oid {
-            hasher.update(oid.to_le_bytes());
+        match oid {
+            Some(o) => {
+                hasher.update([1u8]);
+                hasher.update(o.to_le_bytes());
+            }
+            None => hasher.update([0u8]),
         }
+
         let hash = hasher.finalize();
         format!("hash:{}", hex::encode(&hash[..16]))
     }
@@ -480,5 +503,78 @@ mod tests {
 
         let key = fill.fill_key();
         assert!(key.starts_with("hash:"));
+    }
+
+    #[test]
+    fn test_fill_key_no_boundary_collision() {
+        // Test that variable-length field boundaries are respected.
+        // Without length prefixes, "AB" + "C" and "A" + "BC" would hash the same.
+        let px = Decimal::from_str("100").unwrap();
+        let sz = Decimal::from_str("1").unwrap();
+        let fee = Decimal::from_str("0").unwrap();
+        let pnl = Decimal::from_str("0").unwrap();
+
+        // user="AB", coin="C"
+        let key1 = Fill::compute_fill_key(
+            &Address::new("AB".to_string()),
+            &Coin::new("C".to_string()),
+            TimeMs::new(1000),
+            Side::Buy,
+            &px,
+            &sz,
+            &fee,
+            &pnl,
+            None,
+            None,
+            None,
+        );
+
+        // user="A", coin="BC"
+        let key2 = Fill::compute_fill_key(
+            &Address::new("A".to_string()),
+            &Coin::new("BC".to_string()),
+            TimeMs::new(1000),
+            Side::Buy,
+            &px,
+            &sz,
+            &fee,
+            &pnl,
+            None,
+            None,
+            None,
+        );
+
+        assert_ne!(key1, key2, "Different user/coin boundaries must produce different keys");
+
+        // Also test decimal boundary collisions: px="12", sz="3" vs px="1", sz="23"
+        let key3 = Fill::compute_fill_key(
+            &Address::new("X".to_string()),
+            &Coin::new("Y".to_string()),
+            TimeMs::new(1000),
+            Side::Buy,
+            &Decimal::from_str("12").unwrap(),
+            &Decimal::from_str("3").unwrap(),
+            &fee,
+            &pnl,
+            None,
+            None,
+            None,
+        );
+
+        let key4 = Fill::compute_fill_key(
+            &Address::new("X".to_string()),
+            &Coin::new("Y".to_string()),
+            TimeMs::new(1000),
+            Side::Buy,
+            &Decimal::from_str("1").unwrap(),
+            &Decimal::from_str("23").unwrap(),
+            &fee,
+            &pnl,
+            None,
+            None,
+            None,
+        );
+
+        assert_ne!(key3, key4, "Different px/sz boundaries must produce different keys");
     }
 }
