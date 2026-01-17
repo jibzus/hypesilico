@@ -58,8 +58,10 @@ pub async fn get_positions_history(
     let builder_only = params.builder_only.unwrap_or(false);
 
     state
+        .orchestrator
         .ensure_compiled(&user, coin.as_ref(), from_ms, to_ms)
-        .await?;
+        .await
+        .map_err(|e| AppError::Internal(format!("Compilation failed: {}", e)))?;
 
     let mut snapshots = state
         .repo

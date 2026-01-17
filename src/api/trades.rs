@@ -63,9 +63,10 @@ pub async fn get_trades(
     let builder_only = params.builder_only.unwrap_or(false);
 
     state
-        .ingestor
-        .ensure_ingested(&user, coin.as_ref(), from_ms, to_ms)
-        .await?;
+        .orchestrator
+        .ensure_compiled(&user, coin.as_ref(), from_ms, to_ms)
+        .await
+        .map_err(|e| AppError::Internal(format!("Compilation failed: {}", e)))?;
 
     let mut fills = state
         .repo

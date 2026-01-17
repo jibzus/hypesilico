@@ -1,54 +1,36 @@
 pub mod health;
+pub mod pnl;
 pub mod positions;
 pub mod trades;
 
-use crate::compile::Compiler;
-use crate::domain::{Address, Coin, TimeMs};
-use crate::error::AppError;
-use crate::orchestration::ensure::Ingestor;
-use crate::Repository;
+use crate::config::Config;
+use crate::db::Repository;
+use crate::engine::EquityResolver;
+use crate::orchestration::orchestrator::Orchestrator;
 use axum::{routing::get, Router};
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct AppState {
     pub repo: Arc<Repository>,
-    pub ingestor: Arc<Ingestor>,
+    pub config: Config,
+    pub orchestrator: Arc<Orchestrator>,
+    pub equity_resolver: Arc<EquityResolver>,
 }
 
 impl AppState {
-    pub async fn ensure_compiled(
-        &self,
-        user: &Address,
-        coin: Option<&Coin>,
-        from_ms: Option<TimeMs>,
-        to_ms: Option<TimeMs>,
-    ) -> Result<(), AppError> {
-        self.ingestor
-            .ensure_ingested(user, coin, from_ms, to_ms)
-            .await
-            .map_err(|e| AppError::Internal(format!("Ingestion failed: {}", e)))?;
-
-        if let Some(coin) = coin {
-            Compiler::compile_incremental(&self.repo, user, coin)
-                .await
-                .map_err(|e| AppError::Internal(format!("Compile failed: {}", e)))?;
-            return Ok(());
+    pub fn new(
+        repo: Arc<Repository>,
+        config: Config,
+        orchestrator: Arc<Orchestrator>,
+        equity_resolver: Arc<EquityResolver>,
+    ) -> Self {
+        Self {
+            repo,
+            config,
+            orchestrator,
+            equity_resolver,
         }
-
-        let coins = self
-            .repo
-            .query_distinct_coins(user, from_ms, to_ms)
-            .await
-            .map_err(|e| AppError::Internal(format!("Coin query failed: {}", e)))?;
-
-        for coin in coins {
-            Compiler::compile_incremental(&self.repo, user, &coin)
-                .await
-                .map_err(|e| AppError::Internal(format!("Compile failed: {}", e)))?;
-        }
-
-        Ok(())
     }
 }
 
@@ -61,5 +43,6 @@ pub fn create_router(state: AppState) -> Router {
             get(positions::get_positions_history),
         )
         .route("/v1/trades", get(trades::get_trades))
+        .route("/v1/pnl", get(pnl::get_pnl))
         .with_state(state)
 }

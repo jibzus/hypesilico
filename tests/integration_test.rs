@@ -1,7 +1,12 @@
 use axum::http::StatusCode;
+use hypesilico::api::{self, AppState};
+use hypesilico::config::{BuilderAttributionMode, Config, PnlMode};
 use hypesilico::datasource::MockDataSource;
+use hypesilico::db::init_db;
+use hypesilico::engine::EquityResolver;
 use hypesilico::orchestration::ensure::Ingestor;
-use hypesilico::{api, config::Config, db::init_db, DataSource, Repository};
+use hypesilico::orchestration::orchestrator::Orchestrator;
+use hypesilico::Repository;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tower::util::ServiceExt;
@@ -13,23 +18,28 @@ async fn setup_test_app() -> (axum::Router, TempDir) {
         .join("test.db")
         .to_string_lossy()
         .to_string();
-    let pool = init_db(&db_path).await.expect("init_db failed");
 
+    let pool = init_db(&db_path).await.expect("init_db failed");
     let repo = Arc::new(Repository::new(pool));
-    let datasource: Arc<dyn DataSource> = Arc::new(MockDataSource::new());
+    let datasource = Arc::new(MockDataSource::new());
+
     let config = Config {
         port: 0,
         database_path: db_path,
         hyperliquid_api_url: "http://example.invalid".to_string(),
         target_builder: "0x0000000000000000000000000000000000000000".to_string(),
-        builder_attribution_mode: hypesilico::config::BuilderAttributionMode::Auto,
-        pnl_mode: hypesilico::config::PnlMode::Gross,
+        builder_attribution_mode: BuilderAttributionMode::Auto,
+        pnl_mode: PnlMode::Gross,
         lookback_ms: 0,
         leaderboard_users: vec![],
     };
-    let ingestor = Arc::new(Ingestor::new(datasource, repo.clone(), config));
 
-    (api::create_router(api::AppState { repo, ingestor }), temp_dir)
+    let ingestor = Ingestor::new(datasource, repo.clone(), config.clone());
+    let orchestrator = Arc::new(Orchestrator::new(ingestor, repo.clone()));
+    let equity_resolver = Arc::new(EquityResolver::new(repo.clone()));
+    let state = AppState::new(repo, config, orchestrator, equity_resolver);
+
+    (api::create_router(state), temp_dir)
 }
 
 #[tokio::test]

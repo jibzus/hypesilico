@@ -19,6 +19,14 @@ pub struct PositionSnapshotRow {
     pub lifecycle_tainted: bool,
 }
 
+/// Minimal fill effect row for PnL aggregation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PnlFillEffect {
+    pub lifecycle_id: i64,
+    pub fee: Decimal,
+    pub closed_pnl: Decimal,
+}
+
 /// Repository for database operations.
 pub struct Repository {
     pool: SqlitePool,
@@ -1203,6 +1211,253 @@ impl Repository {
                 )
             })
             .collect())
+    }
+
+    /// Query fill effects for PnL aggregation for a user with optional coin/time window.
+    ///
+    /// Filters by raw fill timestamps (time_ms) to support fromMs/toMs semantics.
+    pub async fn query_fill_effects_for_pnl(
+        &self,
+        user: &Address,
+        coin: Option<&Coin>,
+        from_ms: Option<TimeMs>,
+        to_ms: Option<TimeMs>,
+    ) -> Result<Vec<PnlFillEffect>, sqlx::Error> {
+        let from_ms = from_ms.unwrap_or(TimeMs::new(0)).as_ms();
+        let to_ms = to_ms.unwrap_or(TimeMs::new(i64::MAX)).as_ms();
+
+        let (sql, binds_coin) = if coin.is_some() {
+            (
+                r#"
+                SELECT fe.lifecycle_id, fe.fee, fe.closed_pnl
+                FROM fill_effects fe
+                JOIN raw_fills rf ON rf.fill_key = fe.fill_key
+                JOIN position_lifecycles pl ON pl.id = fe.lifecycle_id
+                WHERE pl.user = ? AND pl.coin = ? AND rf.time_ms >= ? AND rf.time_ms <= ?
+                ORDER BY fe.id ASC
+                "#,
+                true,
+            )
+        } else {
+            (
+                r#"
+                SELECT fe.lifecycle_id, fe.fee, fe.closed_pnl
+                FROM fill_effects fe
+                JOIN raw_fills rf ON rf.fill_key = fe.fill_key
+                JOIN position_lifecycles pl ON pl.id = fe.lifecycle_id
+                WHERE pl.user = ? AND rf.time_ms >= ? AND rf.time_ms <= ?
+                ORDER BY fe.id ASC
+                "#,
+                false,
+            )
+        };
+
+        let mut query = sqlx::query(sql).bind(user.as_str());
+        if binds_coin {
+            query = query.bind(coin.expect("binds_coin implies coin is Some").as_str());
+        }
+        query = query.bind(from_ms).bind(to_ms);
+
+        let rows = query.fetch_all(&self.pool).await?;
+
+        Ok(rows
+            .iter()
+            .map(|row| {
+                let fee_str: String = row.get("fee");
+                let closed_pnl_str: String = row.get("closed_pnl");
+                let lifecycle_id: i64 = row.get("lifecycle_id");
+
+                let fee = Decimal::from_str(&fee_str).unwrap_or_else(|e| {
+                    warn!(lifecycle_id, fee = %fee_str, error = %e, "Failed to parse fee decimal, using default");
+                    Decimal::default()
+                });
+                let closed_pnl = Decimal::from_str(&closed_pnl_str).unwrap_or_else(|e| {
+                    warn!(lifecycle_id, closed_pnl = %closed_pnl_str, error = %e, "Failed to parse closed_pnl decimal, using default");
+                    Decimal::default()
+                });
+
+                PnlFillEffect {
+                    lifecycle_id,
+                    fee,
+                    closed_pnl,
+                }
+            })
+            .collect())
+    }
+
+    /// Return the set of tainted lifecycle IDs from a provided list.
+    pub async fn query_tainted_lifecycle_ids(
+        &self,
+        lifecycle_ids: &[i64],
+    ) -> Result<Vec<i64>, sqlx::Error> {
+        if lifecycle_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let placeholders = vec!["?"; lifecycle_ids.len()].join(",");
+        let sql = format!(
+            r#"
+            SELECT id
+            FROM position_lifecycles
+            WHERE id IN ({}) AND is_tainted = 1
+            "#,
+            placeholders
+        );
+
+        let mut query = sqlx::query(&sql);
+        for id in lifecycle_ids {
+            query = query.bind(id);
+        }
+
+        let rows = query.fetch_all(&self.pool).await?;
+        Ok(rows.iter().map(|row| row.get::<i64, _>("id")).collect())
+    }
+
+    /// Sum deposits up to and including `at_ms`.
+    ///
+    /// # Implementation Note
+    ///
+    /// We iterate in Rust to preserve decimal precision. SQLite's SUM aggregate
+    /// function returns REAL (float), which would lose precision for financial
+    /// calculations. By fetching rows and summing with our Decimal type, we
+    /// maintain lossless arithmetic.
+    pub async fn sum_deposits_up_to(
+        &self,
+        user: &Address,
+        at_ms: TimeMs,
+    ) -> Result<Decimal, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT amount
+            FROM deposits
+            WHERE user = ? AND time_ms <= ?
+            ORDER BY time_ms ASC, id ASC
+            "#,
+        )
+        .bind(user.as_str())
+        .bind(at_ms.as_i64())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut sum = Decimal::zero();
+        for row in rows {
+            let amount_str: String = row.get("amount");
+            let amount = Decimal::from_str(&amount_str).unwrap_or_else(|e| {
+                warn!(user = %user, amount = %amount_str, error = %e, "Failed to parse deposit amount decimal, using default");
+                Decimal::default()
+            });
+            sum = sum + amount;
+        }
+
+        Ok(sum)
+    }
+
+    /// Sum realized PnL strictly before `at_ms` from fill effects (excludes funding).
+    ///
+    /// # Implementation Note
+    ///
+    /// We iterate in Rust to preserve decimal precision. SQLite's SUM aggregate
+    /// function returns REAL (float), which would lose precision for financial
+    /// calculations. By fetching rows and summing with our Decimal type, we
+    /// maintain lossless arithmetic.
+    pub async fn sum_realized_pnl_before(
+        &self,
+        user: &Address,
+        at_ms: TimeMs,
+    ) -> Result<Decimal, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT fe.closed_pnl
+            FROM fill_effects fe
+            JOIN raw_fills rf ON rf.fill_key = fe.fill_key
+            JOIN position_lifecycles pl ON pl.id = fe.lifecycle_id
+            WHERE pl.user = ? AND rf.time_ms < ?
+            ORDER BY rf.time_ms ASC, fe.id ASC
+            "#,
+        )
+        .bind(user.as_str())
+        .bind(at_ms.as_i64())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut sum = Decimal::zero();
+        for row in rows {
+            let pnl_str: String = row.get("closed_pnl");
+            let pnl = Decimal::from_str(&pnl_str).unwrap_or_else(|e| {
+                warn!(user = %user, closed_pnl = %pnl_str, error = %e, "Failed to parse closed_pnl decimal, using default");
+                Decimal::default()
+            });
+            sum = sum + pnl;
+        }
+
+        Ok(sum)
+    }
+
+    /// Get the latest equity snapshot at or before `at_ms`.
+    pub async fn get_equity_snapshot_at_or_before(
+        &self,
+        user: &Address,
+        at_ms: TimeMs,
+    ) -> Result<Option<(TimeMs, Decimal)>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT time_ms, equity
+            FROM equity_snapshots
+            WHERE user = ? AND time_ms <= ?
+            ORDER BY time_ms DESC, id DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(user.as_str())
+        .bind(at_ms.as_i64())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| {
+            let time_ms: i64 = r.get("time_ms");
+            let equity_str: String = r.get("equity");
+            let equity = Decimal::from_str(&equity_str).unwrap_or_else(|e| {
+                warn!(user = %user, equity = %equity_str, error = %e, "Failed to parse equity snapshot decimal, using default");
+                Decimal::default()
+            });
+            (TimeMs::new(time_ms), equity)
+        }))
+    }
+
+    /// Upsert an equity snapshot for an exact (user, time_ms) key.
+    pub async fn upsert_equity_snapshot(
+        &self,
+        user: &Address,
+        time_ms: TimeMs,
+        equity: Decimal,
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query(
+            r#"
+            DELETE FROM equity_snapshots
+            WHERE user = ? AND time_ms = ?
+            "#,
+        )
+        .bind(user.as_str())
+        .bind(time_ms.as_i64())
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO equity_snapshots (user, time_ms, equity)
+            VALUES (?, ?, ?)
+            "#,
+        )
+        .bind(user.as_str())
+        .bind(time_ms.as_i64())
+        .bind(equity.to_canonical_string())
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(())
     }
 }
 
