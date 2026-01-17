@@ -1,6 +1,7 @@
 use crate::domain::{Decimal, Fill, Side};
 
 use super::{Effect, EffectType, Lifecycle, Snapshot};
+use sha2::{Digest, Sha256};
 
 /// Current state of a position for a user+coin.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -39,7 +40,6 @@ impl PositionState {
 
 pub struct PositionTracker {
     pub state: PositionState,
-    next_lifecycle_id: i64,
 
     // Outputs accumulated during processing.
     lifecycles: Vec<Lifecycle>,
@@ -51,7 +51,6 @@ impl PositionTracker {
     pub fn new() -> Self {
         Self {
             state: PositionState::new(),
-            next_lifecycle_id: 1,
             lifecycles: Vec::new(),
             snapshots: Vec::new(),
             effects: Vec::new(),
@@ -97,8 +96,7 @@ impl PositionTracker {
 
     /// Handle opening a new position from flat.
     fn handle_open(&mut self, fill: &Fill, new_size: Decimal) {
-        let lifecycle_id = self.next_lifecycle_id;
-        self.next_lifecycle_id += 1;
+        let lifecycle_id = lifecycle_id_from_fill_key(fill.fill_key());
 
         self.lifecycles.push(Lifecycle {
             id: lifecycle_id,
@@ -205,8 +203,7 @@ impl PositionTracker {
             lifecycle_id: old_lifecycle_id,
         });
 
-        let new_lifecycle_id = self.next_lifecycle_id;
-        self.next_lifecycle_id += 1;
+        let new_lifecycle_id = lifecycle_id_from_fill_key(fill.fill_key());
 
         self.lifecycles.push(Lifecycle {
             id: new_lifecycle_id,
@@ -311,4 +308,28 @@ impl Default for PositionTracker {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Generate a deterministic lifecycle ID from a fill key using SHA256.
+///
+/// # Design Notes
+/// - Uses first 8 bytes of SHA256, masked to 63 bits for positive i64
+/// - Provides ~2^31.5 entries before 50% birthday collision probability
+/// - Acceptable for trading ledgers since lifecycles are scoped per user+coin
+/// - Determinism enables reproducible compilation across runs
+///
+/// # Collision Handling
+/// If two fill_keys ever produce the same ID (extremely unlikely), the DB's
+/// UNIQUE constraint on (user, coin, id) will cause an insert failure,
+/// surfacing the issue immediately rather than silently corrupting data.
+fn lifecycle_id_from_fill_key(fill_key: &str) -> i64 {
+    let mut hasher = Sha256::new();
+    hasher.update(fill_key.as_bytes());
+    let hash = hasher.finalize();
+
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&hash[..8]);
+
+    let id = i64::from_le_bytes(bytes) & 0x7fff_ffff_ffff_ffff;
+    if id == 0 { 1 } else { id }
 }
