@@ -40,17 +40,9 @@ impl DayContext {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AttributionIngestor {
     pub tolerances: MatchTolerances,
-}
-
-impl Default for AttributionIngestor {
-    fn default() -> Self {
-        Self {
-            tolerances: MatchTolerances::default(),
-        }
-    }
 }
 
 impl AttributionIngestor {
@@ -86,6 +78,7 @@ impl AttributionIngestor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn ingest_window(
         &self,
         repo: &Repository,
@@ -117,7 +110,7 @@ impl AttributionIngestor {
 
         for fill in &fills {
             let day = yyyymmdd_utc(fill.time_ms.as_ms())?;
-            let need_refresh = day_ctx.as_ref().map_or(true, |ctx| ctx.day != day);
+            let need_refresh = day_ctx.as_ref().is_none_or(|ctx| ctx.day != day);
 
             if need_refresh {
                 // Fetch logs for the new day based on attribution mode.
