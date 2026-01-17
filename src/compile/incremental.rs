@@ -3,7 +3,7 @@
 use crate::db::Repository;
 use crate::domain::{Address, Attribution, AttributionConfidence, AttributionMode, Coin};
 use crate::engine::{PositionTracker, TaintComputer};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Compiler for incremental fill processing.
 pub struct Compiler;
@@ -40,9 +40,19 @@ impl Compiler {
         }
 
         // Ensure attributions exist for these fills so builder-only tainting can be computed.
-        // Current default: heuristic attribution using builder_fee > 0.
+        //
+        // Important: Do not overwrite existing attributions (e.g., from builder logs). We only
+        // populate missing rows with a heuristic default (builder_fee > 0).
+        let fill_keys: Vec<String> = fills.iter().map(|f| f.fill_key.clone()).collect();
+        let existing_attributions = repo.query_attributions(&fill_keys).await?;
+        let existing_keys: HashSet<String> = existing_attributions
+            .iter()
+            .map(|(fill_key, _attributed, _mode, _confidence, _builder)| fill_key.clone())
+            .collect();
+
         let attributions_to_insert: Vec<(String, bool, String, String, Option<String>)> = fills
             .iter()
+            .filter(|f| !existing_keys.contains(&f.fill_key))
             .map(|f| {
                 let attr = Attribution::from_heuristic(f.builder_fee.as_ref());
                 (
@@ -86,7 +96,6 @@ impl Compiler {
         }
 
         // Query attributions for taint computation
-        let fill_keys: Vec<String> = fills.iter().map(|f| f.fill_key.clone()).collect();
         let attributions_data = repo.query_attributions(&fill_keys).await?;
 
         // Build attribution map

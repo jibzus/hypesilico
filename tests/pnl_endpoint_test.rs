@@ -4,7 +4,7 @@ use hypesilico::compile::Compiler;
 use hypesilico::config::{BuilderAttributionMode, PnlMode};
 use hypesilico::datasource::MockDataSource;
 use hypesilico::db::init_db;
-use hypesilico::domain::{Address, Coin, Decimal, Fill, Side, TimeMs};
+use hypesilico::domain::{Address, Coin, Decimal, Deposit, Fill, Side, TimeMs};
 use hypesilico::engine::EquityResolver;
 use hypesilico::orchestration::ensure::Ingestor;
 use hypesilico::orchestration::orchestrator::Orchestrator;
@@ -112,13 +112,13 @@ async fn test_pnl_response_has_required_fields() {
     test_app
         .state
         .repo
-        .insert_deposit(
-            &user,
-            TimeMs::new(0),
-            Decimal::from_str("10000").unwrap(),
-            "dep:1",
-            None,
-        )
+        .insert_deposit(&Deposit {
+            event_key: "dep:1".to_string(),
+            user: user.clone(),
+            time_ms: TimeMs::new(0),
+            amount: Decimal::from_str("10000").unwrap(),
+            tx_hash: None,
+        })
         .await
         .unwrap();
 
@@ -267,13 +267,13 @@ async fn test_return_pct_uses_equity_at_from_ms() {
     test_app
         .state
         .repo
-        .insert_deposit(
-            &user,
-            TimeMs::new(0),
-            Decimal::from_str("10000").unwrap(),
-            "dep:1",
-            None,
-        )
+        .insert_deposit(&Deposit {
+            event_key: "dep:1".to_string(),
+            user: user.clone(),
+            time_ms: TimeMs::new(0),
+            amount: Decimal::from_str("10000").unwrap(),
+            tx_hash: None,
+        })
         .await
         .unwrap();
 
@@ -345,13 +345,13 @@ async fn test_return_pct_respects_max_start_capital() {
     test_app
         .state
         .repo
-        .insert_deposit(
-            &user,
-            TimeMs::new(0),
-            Decimal::from_str("100000").unwrap(),
-            "dep:1",
-            None,
-        )
+        .insert_deposit(&Deposit {
+            event_key: "dep:1".to_string(),
+            user: user.clone(),
+            time_ms: TimeMs::new(0),
+            amount: Decimal::from_str("100000").unwrap(),
+            tx_hash: None,
+        })
         .await
         .unwrap();
 
@@ -474,13 +474,13 @@ async fn test_pnl_response_deterministic() {
     test_app
         .state
         .repo
-        .insert_deposit(
-            &user,
-            TimeMs::new(0),
-            Decimal::from_str("10000").unwrap(),
-            "dep:1",
-            None,
-        )
+        .insert_deposit(&Deposit {
+            event_key: "dep:1".to_string(),
+            user: user.clone(),
+            time_ms: TimeMs::new(0),
+            amount: Decimal::from_str("10000").unwrap(),
+            tx_hash: None,
+        })
         .await
         .unwrap();
 

@@ -1,6 +1,8 @@
 use axum::http::{Request, StatusCode};
 use hypesilico::datasource::MockDataSource;
+use hypesilico::engine::EquityResolver;
 use hypesilico::orchestration::ensure::Ingestor;
+use hypesilico::orchestration::orchestrator::Orchestrator;
 use hypesilico::{
     api,
     config::{BuilderAttributionMode, Config, PnlMode},
@@ -42,8 +44,12 @@ async fn setup_test_app() -> TestApp {
         lookback_ms: 0,
         leaderboard_users: vec![],
     };
-    let ingestor = Arc::new(Ingestor::new(datasource, repo.clone(), config));
-    let app = api::create_router(api::AppState { repo: repo.clone(), ingestor });
+
+    let ingestor = Ingestor::new(datasource, repo.clone(), config.clone());
+    let orchestrator = Arc::new(Orchestrator::new(ingestor, repo.clone()));
+    let equity_resolver = Arc::new(EquityResolver::new(repo.clone()));
+    let state = api::AppState::new(repo.clone(), config, orchestrator, equity_resolver);
+    let app = api::create_router(state);
 
     TestApp {
         app,
@@ -226,8 +232,20 @@ async fn test_builder_only_excludes_tainted_lifecycles() {
 
     // Mixed attribution taints the lifecycle.
     repo.insert_attributions(&[
-        (f1.fill_key.clone(), true, "heuristic".to_string(), "low".to_string()),
-        (f2.fill_key.clone(), false, "heuristic".to_string(), "low".to_string()),
+        (
+            f1.fill_key.clone(),
+            true,
+            "heuristic".to_string(),
+            "low".to_string(),
+            None,
+        ),
+        (
+            f2.fill_key.clone(),
+            false,
+            "heuristic".to_string(),
+            "low".to_string(),
+            None,
+        ),
     ])
     .await
     .unwrap();
@@ -264,6 +282,7 @@ async fn test_builder_only_includes_tainted_fields_when_untainted() {
         true,
         "heuristic".to_string(),
         "low".to_string(),
+        None,
     )])
     .await
     .unwrap();

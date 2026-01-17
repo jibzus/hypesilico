@@ -4,7 +4,9 @@ use hypesilico::config::{BuilderAttributionMode, Config, PnlMode};
 use hypesilico::datasource::MockDataSource;
 use hypesilico::db::init_db;
 use hypesilico::domain::{Address, Attribution, AttributionConfidence, Coin, Decimal, Fill, Side, TimeMs};
+use hypesilico::engine::EquityResolver;
 use hypesilico::orchestration::ensure::Ingestor;
+use hypesilico::orchestration::orchestrator::Orchestrator;
 use std::str::FromStr;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -37,8 +39,11 @@ async fn setup_test_app(datasource: Arc<MockDataSource>) -> TestApp {
         leaderboard_users: vec![],
     };
 
-    let ingestor = Arc::new(Ingestor::new(datasource, repo.clone(), config));
-    let state = api::AppState { repo: repo.clone(), ingestor };
+    let ingestor = Ingestor::new(datasource, repo.clone(), config.clone());
+    let orchestrator = Arc::new(Orchestrator::new(ingestor, repo.clone()));
+    let equity_resolver = Arc::new(EquityResolver::new(repo.clone()));
+
+    let state = api::AppState::new(repo.clone(), config, orchestrator, equity_resolver);
     let app = api::create_router(state);
 
     TestApp {
@@ -217,4 +222,3 @@ async fn test_trades_rejects_invalid_user() {
     let (status, _body) = request(test_app.app, "/v1/trades?user=not-an-address").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
-
