@@ -1,0 +1,19 @@
+//! Domain types and determinism layer for Hyperliquid Trade Ledger API.
+//!
+//! This module provides:
+//! - Lossless numeric handling via Decimal wrapper
+//! - Domain primitives: TimeMs, Address, Coin, Side
+//! - Fill and Attribution types with canonical JSON serialization
+//! - Stable fill ordering key helper for deterministic processing
+
+pub mod attribution;
+pub mod decimal;
+pub mod fill;
+pub mod ordering;
+pub mod primitives;
+
+pub use attribution::{Attribution, AttributionMode, Confidence};
+pub use decimal::Decimal;
+pub use fill::Fill;
+pub use ordering::FillOrderingKey;
+pub use primitives::{Address, Coin, Side, TimeMs};
