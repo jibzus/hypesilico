@@ -130,11 +130,8 @@ mod tests {
     #[test]
     fn test_logs_attribution_exact_match() {
         let builder = Address::new("0x1234".to_string());
-        let attr = Attribution::from_logs_match(
-            true,
-            Some(builder.clone()),
-            AttributionConfidence::Exact,
-        );
+        let attr =
+            Attribution::from_logs_match(true, Some(builder.clone()), AttributionConfidence::Exact);
 
         assert!(attr.attributed);
         assert_eq!(attr.mode, AttributionMode::Logs);

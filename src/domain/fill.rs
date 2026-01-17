@@ -251,7 +251,10 @@ mod tests {
             Some(999),
             None,
         );
-        assert_ne!(key1, key2, "Same tid but different users must produce different keys");
+        assert_ne!(
+            key1, key2,
+            "Same tid but different users must produce different keys"
+        );
 
         // Same tid, same user, different coins
         let key3 = Fill::compute_fill_key(
@@ -267,7 +270,10 @@ mod tests {
             Some(999),
             None,
         );
-        assert_ne!(key1, key3, "Same tid but different coins must produce different keys");
+        assert_ne!(
+            key1, key3,
+            "Same tid but different coins must produce different keys"
+        );
     }
 
     #[test]
@@ -422,9 +428,18 @@ mod tests {
             Some(999),
         );
 
-        assert_ne!(key1, key2, "Different builder fees must produce different keys");
-        assert_ne!(key1, key3, "With vs without builder fee must produce different keys");
-        assert_ne!(key2, key3, "With vs without builder fee must produce different keys");
+        assert_ne!(
+            key1, key2,
+            "Different builder fees must produce different keys"
+        );
+        assert_ne!(
+            key1, key3,
+            "With vs without builder fee must produce different keys"
+        );
+        assert_ne!(
+            key2, key3,
+            "With vs without builder fee must produce different keys"
+        );
     }
 
     #[test]
@@ -551,7 +566,10 @@ mod tests {
             None,
         );
 
-        assert_ne!(key1, key2, "Different user/coin boundaries must produce different keys");
+        assert_ne!(
+            key1, key2,
+            "Different user/coin boundaries must produce different keys"
+        );
 
         // Also test decimal boundary collisions: px="12", sz="3" vs px="1", sz="23"
         let key3 = Fill::compute_fill_key(
@@ -582,6 +600,9 @@ mod tests {
             None,
         );
 
-        assert_ne!(key3, key4, "Different px/sz boundaries must produce different keys");
+        assert_ne!(
+            key3, key4,
+            "Different px/sz boundaries must produce different keys"
+        );
     }
 }

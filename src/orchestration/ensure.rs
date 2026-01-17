@@ -58,7 +58,7 @@ impl Ingestor {
 
     async fn compute_fetch_start(
         &self,
-        _user: &Address,     // TODO(PR-XXX): Use for per-user watermark lookups
+        _user: &Address,      // TODO(PR-XXX): Use for per-user watermark lookups
         _coin: Option<&Coin>, // TODO(PR-XXX): Use for per-coin watermark lookups
         requested_from: Option<TimeMs>,
     ) -> Result<TimeMs, IngestionError> {
@@ -169,9 +169,7 @@ mod tests {
     async fn test_ensure_ingested_is_idempotent() {
         let user = Address::new("0x123".to_string());
         let coin = Coin::new("BTC".to_string());
-        let ds = Arc::new(
-            MockDataSource::new().with_fill(make_test_fill(&user, &coin, 1000, 1)),
-        );
+        let ds = Arc::new(MockDataSource::new().with_fill(make_test_fill(&user, &coin, 1000, 1)));
 
         let (repo, _temp) = setup_repo().await;
         let ingestor = Ingestor::new(ds, repo, test_config(0));
@@ -198,7 +196,12 @@ mod tests {
         let ingestor = Ingestor::new(ds, repo, test_config(100));
 
         let result = ingestor
-            .ensure_ingested(&user, Some(&coin), Some(TimeMs::new(1000)), Some(TimeMs::new(2000)))
+            .ensure_ingested(
+                &user,
+                Some(&coin),
+                Some(TimeMs::new(1000)),
+                Some(TimeMs::new(2000)),
+            )
             .await
             .unwrap();
 

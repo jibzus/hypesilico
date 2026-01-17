@@ -127,9 +127,7 @@ impl<'a> BuilderOnlyFilter<'a> {
 
     /// Check if any data was excluded (for tainted flag in response).
     pub fn had_exclusions(&self, lifecycle_ids: &[i64]) -> bool {
-        lifecycle_ids
-            .iter()
-            .any(|id| !self.include_lifecycle(*id))
+        lifecycle_ids.iter().any(|id| !self.include_lifecycle(*id))
     }
 }
 
@@ -270,4 +268,3 @@ mod tests {
         assert!(!filter.had_exclusions(&[1]));
     }
 }
-

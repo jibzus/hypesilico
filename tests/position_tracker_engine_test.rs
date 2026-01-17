@@ -5,7 +5,15 @@ fn d(s: &str) -> Decimal {
     Decimal::from_str_canonical(s).unwrap()
 }
 
-fn fill(side: Side, sz: &str, px: &str, time_ms: i64, tid: i64, fee: &str, closed_pnl: &str) -> Fill {
+fn fill(
+    side: Side,
+    sz: &str,
+    px: &str,
+    time_ms: i64,
+    tid: i64,
+    fee: &str,
+    closed_pnl: &str,
+) -> Fill {
     Fill::new(
         TimeMs::new(time_ms),
         Address::new("0x123".to_string()),
@@ -160,4 +168,3 @@ fn test_short_open_add_partial_close_then_close() {
     assert_eq!(effects[2].effect_type, EffectType::Close);
     assert_eq!(effects[3].effect_type, EffectType::Close);
 }
-
