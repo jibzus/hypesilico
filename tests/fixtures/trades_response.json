@@ -1,0 +1,22 @@
+{
+  "trades": [
+    {
+      "closedPnl": "0",
+      "coin": "BTC",
+      "fee": "5",
+      "px": "50000",
+      "side": "buy",
+      "sz": "1",
+      "timeMs": 1705000000000
+    },
+    {
+      "closedPnl": "1000",
+      "coin": "BTC",
+      "fee": "5",
+      "px": "51000",
+      "side": "sell",
+      "sz": "1",
+      "timeMs": 1705000001000
+    }
+  ]
+}

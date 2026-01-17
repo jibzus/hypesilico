@@ -1,0 +1,15 @@
+{
+  "totalDeposits": "8000",
+  "depositCount": 2,
+  "deposits": [
+    {
+      "timeMs": 1705000000000,
+      "amount": "5000",
+      "txHash": "0xabc123"
+    },
+    {
+      "timeMs": 1705000001000,
+      "amount": "3000"
+    }
+  ]
+}

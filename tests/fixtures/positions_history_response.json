@@ -1,0 +1,18 @@
+{
+  "snapshots": [
+    {
+      "timeMs": 1705000000000,
+      "coin": "BTC",
+      "netSize": "1",
+      "avgEntryPx": "50000",
+      "lifecycleId": "generated"
+    },
+    {
+      "timeMs": 1705000001000,
+      "coin": "BTC",
+      "netSize": "0",
+      "avgEntryPx": "50000",
+      "lifecycleId": "generated"
+    }
+  ]
+}
