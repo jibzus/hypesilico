@@ -1,0 +1,105 @@
+{
+  "version": "1.0.0",
+  "description": "Golden test data for Hypesilico validation. Update with real wallet data when available.",
+  "health_tests": {
+    "health": {
+      "endpoint": "/health",
+      "expected_status": 200,
+      "expected_body": "ok"
+    },
+    "ready": {
+      "endpoint": "/ready",
+      "expected_status": 200,
+      "expected_body": "ready"
+    }
+  },
+  "test_users": [
+    {
+      "address": "0x0000000000000000000000000000000000000001",
+      "description": "Placeholder test wallet 1 - update with real address",
+      "tests": {
+        "pnl": {
+          "params": {},
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "pnl_with_coin": {
+          "params": {
+            "coin": "BTC"
+          },
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "pnl_builder_only": {
+          "params": {
+            "builderOnly": "true"
+          },
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "trades": {
+          "params": {},
+          "expected": {
+            "has_fields": ["trades"]
+          }
+        },
+        "trades_with_coin": {
+          "params": {
+            "coin": "BTC"
+          },
+          "expected": {
+            "has_fields": ["trades"]
+          }
+        },
+        "positions_history": {
+          "params": {},
+          "expected": {
+            "has_fields": ["snapshots"]
+          }
+        },
+        "deposits": {
+          "params": {},
+          "expected": {
+            "has_fields": ["totalDeposits", "depositCount", "deposits"]
+          }
+        }
+      }
+    }
+  ],
+  "leaderboard_tests": [
+    {
+      "description": "PnL leaderboard",
+      "params": {
+        "metric": "pnl"
+      },
+      "expected": {
+        "is_array": true
+      }
+    },
+    {
+      "description": "Volume leaderboard",
+      "params": {
+        "metric": "volume"
+      },
+      "expected": {
+        "is_array": true
+      }
+    },
+    {
+      "description": "Return percentage leaderboard",
+      "params": {
+        "metric": "returnPct"
+      },
+      "expected": {
+        "is_array": true
+      }
+    }
+  ],
+  "validation_config": {
+    "decimal_tolerance_places": 2,
+    "timeout_seconds": 30
+  }
+}
