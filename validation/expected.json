@@ -307,6 +307,156 @@
           }
         }
       }
+    },
+    {
+      "address": "0xadd12adbbd5db87674b38af99b6dd34dd2a45e0d",
+      "description": "Tidal Whale - $2.5M equity, +$696K PnL (30d), $31.7M volume, 2 open positions",
+      "tests": {
+        "pnl": {
+          "params": {},
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "trades": {
+          "params": {},
+          "expected": {
+            "has_fields": ["trades"]
+          }
+        },
+        "positions_history": {
+          "params": {},
+          "expected": {
+            "has_fields": ["snapshots"]
+          }
+        },
+        "deposits": {
+          "params": {},
+          "expected": {
+            "has_fields": ["totalDeposits", "depositCount", "deposits"]
+          }
+        }
+      }
+    },
+    {
+      "address": "0x0e09b56ef137f417e424f1265425e93bfff77e17",
+      "description": "High volume trader - $506K equity, +$1.27M PnL (30d), $994M volume",
+      "tests": {
+        "pnl": {
+          "params": {},
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "trades": {
+          "params": {},
+          "expected": {
+            "has_fields": ["trades"]
+          }
+        },
+        "positions_history": {
+          "params": {},
+          "expected": {
+            "has_fields": ["snapshots"]
+          }
+        },
+        "deposits": {
+          "params": {},
+          "expected": {
+            "has_fields": ["totalDeposits", "depositCount", "deposits"]
+          }
+        }
+      }
+    },
+    {
+      "address": "0x186b7610ff3f2e3fd7985b95f525ee0e37a79a74",
+      "description": "New active trader - $661 equity, +$55K PnL (30d), $122M volume, 59 days old",
+      "tests": {
+        "pnl": {
+          "params": {},
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "trades": {
+          "params": {},
+          "expected": {
+            "has_fields": ["trades"]
+          }
+        },
+        "positions_history": {
+          "params": {},
+          "expected": {
+            "has_fields": ["snapshots"]
+          }
+        },
+        "deposits": {
+          "params": {},
+          "expected": {
+            "has_fields": ["totalDeposits", "depositCount", "deposits"]
+          }
+        }
+      }
+    },
+    {
+      "address": "0x6c8031a9eb4415284f3f89c0420f697c87168263",
+      "description": "Active trader - $272K equity, +$30K PnL (30d), $58M volume",
+      "tests": {
+        "pnl": {
+          "params": {},
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "trades": {
+          "params": {},
+          "expected": {
+            "has_fields": ["trades"]
+          }
+        },
+        "positions_history": {
+          "params": {},
+          "expected": {
+            "has_fields": ["snapshots"]
+          }
+        },
+        "deposits": {
+          "params": {},
+          "expected": {
+            "has_fields": ["totalDeposits", "depositCount", "deposits"]
+          }
+        }
+      }
+    },
+    {
+      "address": "0x8dbfd29ab4f7caff95b09849fe77778efd5dd1e2",
+      "description": "Test wallet 15",
+      "tests": {
+        "pnl": {
+          "params": {},
+          "expected": {
+            "has_fields": ["realizedPnl", "returnPct", "feesPaid", "tradeCount"]
+          }
+        },
+        "trades": {
+          "params": {},
+          "expected": {
+            "has_fields": ["trades"]
+          }
+        },
+        "positions_history": {
+          "params": {},
+          "expected": {
+            "has_fields": ["snapshots"]
+          }
+        },
+        "deposits": {
+          "params": {},
+          "expected": {
+            "has_fields": ["totalDeposits", "depositCount", "deposits"]
+          }
+        }
+      }
     }
   ],
   "leaderboard_tests": [

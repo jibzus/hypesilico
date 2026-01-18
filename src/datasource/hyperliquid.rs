@@ -258,17 +258,69 @@ fn parse_fill(
     ))
 }
 
+/// Parse a non-funding ledger update from Hyperliquid API.
+///
+/// Hyperliquid returns events in this format:
+/// ```json
+/// {
+///   "time": 1234567890,
+///   "hash": "0x...",
+///   "delta": {
+///     "type": "deposit" | "withdraw" | "transfer" | ...,
+///     "usdc": "1000"
+///   }
+/// }
+/// ```
+///
+/// We filter for "deposit" and "withdraw" types only.
 fn parse_deposit(deposit_json: &serde_json::Value, user: &str) -> Result<Deposit, DataSourceError> {
     let time_ms = deposit_json
         .get("time")
         .and_then(|v| v.as_i64())
         .ok_or_else(|| DataSourceError::ParseError("Missing time field".to_string()))?;
 
-    let amount_str = deposit_json
-        .get("delta")
-        .and_then(|v| v.as_str())
-        .or_else(|| deposit_json.get("amount").and_then(|v| v.as_str()))
-        .ok_or_else(|| DataSourceError::ParseError("Missing delta/amount field".to_string()))?;
+    // Get the delta object
+    let delta = deposit_json.get("delta");
+
+    // Handle nested delta structure from Hyperliquid API
+    let (amount_str, event_type) = if let Some(delta_obj) = delta {
+        if delta_obj.is_object() {
+            // Nested format: { "type": "deposit", "usdc": "1000" }
+            let event_type = delta_obj.get("type").and_then(|v| v.as_str());
+            let usdc_amount = delta_obj.get("usdc").and_then(|v| v.as_str());
+            (usdc_amount, event_type)
+        } else if delta_obj.is_string() {
+            // Flat format: "delta": "1000"
+            (delta_obj.as_str(), None)
+        } else {
+            (None, None)
+        }
+    } else {
+        // Try legacy "amount" field
+        (deposit_json.get("amount").and_then(|v| v.as_str()), None)
+    };
+
+    // Filter: only accept deposits and withdrawals
+    if let Some(evt_type) = event_type {
+        match evt_type {
+            "deposit" | "withdraw" => {}
+            other => {
+                debug!("Skipping non-funding ledger event type: {}", other);
+                return Err(DataSourceError::ParseError(format!(
+                    "Skipping event type: {}",
+                    other
+                )));
+            }
+        }
+    }
+
+    let amount_str = amount_str.ok_or_else(|| {
+        DataSourceError::ParseError(format!(
+            "Missing delta/amount field in: {}",
+            deposit_json
+        ))
+    })?;
+
     let amount = Decimal::from_str_canonical(amount_str)
         .map_err(|e| DataSourceError::ParseError(format!("Invalid amount: {}", e)))?;
 
@@ -277,6 +329,11 @@ fn parse_deposit(deposit_json: &serde_json::Value, user: &str) -> Result<Deposit
         .and_then(|v| v.as_str())
         .or_else(|| deposit_json.get("txHash").and_then(|v| v.as_str()))
         .map(|s| s.to_string());
+
+    debug!(
+        "Parsed deposit: time={}, amount={}, hash={:?}, type={:?}",
+        time_ms, amount, tx_hash, event_type
+    );
 
     Ok(Deposit::new(
         Address::new(user.to_string()),
@@ -313,7 +370,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_deposit_valid() {
+    fn test_parse_deposit_flat_format() {
+        // Flat format: "delta": "1000"
         let deposit_json = serde_json::json!({
             "time": 1000,
             "delta": "1000",
@@ -323,8 +381,60 @@ mod tests {
         let deposit = parse_deposit(&deposit_json, "0x123").unwrap();
         assert_eq!(deposit.user, Address::new("0x123".to_string()));
         assert_eq!(deposit.time_ms, TimeMs::new(1000));
+        assert_eq!(deposit.amount.to_canonical_string(), "1000");
         assert_eq!(deposit.tx_hash.as_deref(), Some("0xdeadbeef"));
         assert_eq!(deposit.event_key, "0xdeadbeef");
+    }
+
+    #[test]
+    fn test_parse_deposit_nested_format() {
+        // Hyperliquid nested format: "delta": { "type": "deposit", "usdc": "1000" }
+        let deposit_json = serde_json::json!({
+            "time": 1500,
+            "delta": {
+                "type": "deposit",
+                "usdc": "2500.50"
+            },
+            "hash": "0xabcdef"
+        });
+
+        let deposit = parse_deposit(&deposit_json, "0x789").unwrap();
+        assert_eq!(deposit.user, Address::new("0x789".to_string()));
+        assert_eq!(deposit.time_ms, TimeMs::new(1500));
+        assert_eq!(deposit.amount.to_canonical_string(), "2500.5");
+        assert_eq!(deposit.tx_hash.as_deref(), Some("0xabcdef"));
+    }
+
+    #[test]
+    fn test_parse_deposit_nested_withdraw() {
+        // Withdrawal should also be parsed
+        let deposit_json = serde_json::json!({
+            "time": 1600,
+            "delta": {
+                "type": "withdraw",
+                "usdc": "-500"
+            },
+            "hash": "0xwithdraw"
+        });
+
+        let deposit = parse_deposit(&deposit_json, "0xabc").unwrap();
+        assert_eq!(deposit.amount.to_canonical_string(), "-500");
+    }
+
+    #[test]
+    fn test_parse_deposit_skip_transfer() {
+        // Transfer type should be skipped
+        let deposit_json = serde_json::json!({
+            "time": 1700,
+            "delta": {
+                "type": "transfer",
+                "usdc": "100"
+            },
+            "hash": "0xtransfer"
+        });
+
+        let result = parse_deposit(&deposit_json, "0xskip");
+        assert!(result.is_err());
     }
 
     #[test]

@@ -44,7 +44,18 @@ pub async fn get_pnl(
         .filter(|s| !s.is_empty())
         .map(|s| Coin::new(s.to_string()));
 
-    let from_ms = params.from_ms.map(TimeMs::new);
+    // If fromMs not provided, use earliest deposit time as default
+    // This ensures equity_at_start is calculated from when the user actually had capital
+    let from_ms = if let Some(from) = params.from_ms {
+        Some(TimeMs::new(from))
+    } else {
+        state
+            .repo
+            .get_earliest_deposit_timestamp(&user)
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?
+            .map(TimeMs::new)
+    };
     let to_ms = params.to_ms.map(TimeMs::new);
 
     if let (Some(from), Some(to)) = (from_ms, to_ms) {
