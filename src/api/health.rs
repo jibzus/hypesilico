@@ -1,11 +1,11 @@
-use axum::http::StatusCode;
+use axum::Json;
 
-pub async fn health() -> (StatusCode, String) {
-    (StatusCode::OK, "ok".to_string())
+pub async fn health() -> Json<serde_json::Value> {
+    Json(serde_json::json!({"status": "ok"}))
 }
 
-pub async fn ready() -> (StatusCode, String) {
-    (StatusCode::OK, "ready".to_string())
+pub async fn ready() -> Json<serde_json::Value> {
+    Json(serde_json::json!({"status": "ready"}))
 }
 
 #[cfg(test)]
@@ -14,15 +14,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_returns_ok() {
-        let (status, body) = health().await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body, "ok");
+        let Json(body) = health().await;
+        assert_eq!(body["status"], "ok");
     }
 
     #[tokio::test]
     async fn test_ready_returns_ready() {
-        let (status, body) = ready().await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body, "ready");
+        let Json(body) = ready().await;
+        assert_eq!(body["status"], "ready");
     }
 }

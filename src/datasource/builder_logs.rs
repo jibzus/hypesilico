@@ -38,7 +38,7 @@ impl BuilderLogsFetcher {
 
     pub fn builder_logs_url(builder: &Address, yyyymmdd: &str) -> String {
         format!(
-            "https://hyperliquid.xyz/builder_fills/{}/{}.csv.lz4",
+            "https://stats-data.hyperliquid.xyz/Mainnet/builder_fills/{}/{}.csv.lz4",
             builder.as_str(),
             yyyymmdd
         )
@@ -78,24 +78,52 @@ impl BuilderLogsFetcher {
     }
 
     pub fn parse_csv(csv_bytes: &[u8]) -> Result<Vec<BuilderLogFill>, BuilderLogsError> {
+        // Actual API schema:
+        // time,user,coin,side,px,sz,crossed,special_trade_type,tif,is_trigger,counterparty,closed_pnl,twap_id,builder_fee
         #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
         struct Row {
-            time_ms: i64,
+            time: String, // ISO8601 format: "2024-12-15T10:30:45.123Z"
             user: String,
             coin: String,
             side: String,
             px: String,
             sz: String,
-            tid: Option<i64>,
-            oid: Option<i64>,
+            // Additional columns from actual API (we ignore them but need to handle them)
+            #[serde(default)]
+            crossed: Option<String>,
+            #[serde(default)]
+            special_trade_type: Option<String>,
+            #[serde(default)]
+            tif: Option<String>,
+            #[serde(default)]
+            is_trigger: Option<String>,
+            #[serde(default)]
+            counterparty: Option<String>,
+            #[serde(default)]
+            closed_pnl: Option<String>,
+            #[serde(default)]
+            twap_id: Option<String>,
+            #[serde(default)]
+            builder_fee: Option<String>,
         }
 
         fn parse_side(s: &str) -> Option<Side> {
             match s.trim().to_ascii_lowercase().as_str() {
-                "a" | "buy" => Some(Side::Buy),
-                "b" | "sell" => Some(Side::Sell),
+                "a" | "buy" | "bid" => Some(Side::Buy),
+                "b" | "sell" | "ask" => Some(Side::Sell),
                 _ => None,
             }
+        }
+
+        /// Parse ISO8601 time string to milliseconds since epoch.
+        /// Expects format: "2024-12-15T10:30:45.123Z" or similar.
+        fn parse_time_to_ms(time_str: &str) -> Result<i64, BuilderLogsError> {
+            use chrono::{DateTime, Utc};
+            let dt: DateTime<Utc> = time_str
+                .parse()
+                .map_err(|e| BuilderLogsError::Csv(format!("invalid time '{}': {}", time_str, e)))?;
+            Ok(dt.timestamp_millis())
         }
 
         let mut reader = csv::ReaderBuilder::new()
@@ -106,6 +134,7 @@ impl BuilderLogsFetcher {
         let mut fills = Vec::new();
         for record in reader.deserialize::<Row>() {
             let row = record.map_err(|e| BuilderLogsError::Csv(e.to_string()))?;
+            let time_ms = parse_time_to_ms(&row.time)?;
             let side = parse_side(&row.side)
                 .ok_or_else(|| BuilderLogsError::Csv(format!("invalid side: {}", row.side)))?;
             let px = Decimal::from_str_canonical(&row.px)
@@ -114,14 +143,14 @@ impl BuilderLogsFetcher {
                 .map_err(|e| BuilderLogsError::Csv(format!("invalid sz: {}", e)))?;
 
             fills.push(BuilderLogFill {
-                time_ms: TimeMs::new(row.time_ms),
+                time_ms: TimeMs::new(time_ms),
                 user: Address::new(row.user),
                 coin: Coin::new(row.coin),
                 side,
                 px,
                 sz,
-                tid: row.tid,
-                oid: row.oid,
+                tid: None, // Not available in actual API
+                oid: None, // Not available in actual API
             });
         }
 
@@ -169,7 +198,8 @@ mod tests {
 
     #[test]
     fn lz4_decompress_fixture_roundtrip() {
-        let csv = b"time_ms,user,coin,side,px,sz,tid,oid\n1700000000000,0xabc,BTC,buy,100,1,42,1001\n";
+        let csv = b"time,user,coin,side,px,sz,crossed,special_trade_type,tif,is_trigger,counterparty,closed_pnl,twap_id,builder_fee\n\
+            2023-11-14T16:53:20.000Z,0xabc,BTC,buy,100,1,false,,Gtc,false,0xdef,0,,0.01\n";
         let lz4 = compress_lz4_frame(csv);
 
         let out = BuilderLogsFetcher::decompress_lz4_frame(&lz4).unwrap();
@@ -178,22 +208,27 @@ mod tests {
 
     #[test]
     fn csv_parsing_valid_row() {
-        let csv = b"time_ms,user,coin,side,px,sz,tid,oid\n1700000000000,0xabc,BTC,A,100,1,42,1001\n";
+        // Schema: time,user,coin,side,px,sz,crossed,special_trade_type,tif,is_trigger,counterparty,closed_pnl,twap_id,builder_fee
+        let csv = b"time,user,coin,side,px,sz,crossed,special_trade_type,tif,is_trigger,counterparty,closed_pnl,twap_id,builder_fee\n\
+            2023-11-14T16:53:20.000Z,0xabc,BTC,A,100,1,false,,Gtc,false,0xdef,0,,0.01\n";
         let fills = BuilderLogsFetcher::parse_csv(csv).unwrap();
         assert_eq!(fills.len(), 1);
-        assert_eq!(fills[0].time_ms, TimeMs::new(1_700_000_000_000));
+        // 2023-11-14T16:53:20.000Z = 1699980800000 ms
+        assert_eq!(fills[0].time_ms, TimeMs::new(1699980800000));
         assert_eq!(fills[0].user.as_str(), "0xabc");
         assert_eq!(fills[0].coin.as_str(), "BTC");
         assert_eq!(fills[0].side, Side::Buy);
         assert_eq!(fills[0].px.to_canonical_string(), "100");
         assert_eq!(fills[0].sz.to_canonical_string(), "1");
-        assert_eq!(fills[0].tid, Some(42));
-        assert_eq!(fills[0].oid, Some(1001));
+        // tid and oid are not available in the real API
+        assert_eq!(fills[0].tid, None);
+        assert_eq!(fills[0].oid, None);
     }
 
     #[test]
     fn csv_parsing_invalid_side_errors() {
-        let csv = b"time_ms,user,coin,side,px,sz,tid,oid\n1700000000000,0xabc,BTC,wat,100,1,42,1001\n";
+        let csv = b"time,user,coin,side,px,sz,crossed,special_trade_type,tif,is_trigger,counterparty,closed_pnl,twap_id,builder_fee\n\
+            2023-11-14T16:53:20.000Z,0xabc,BTC,wat,100,1,false,,Gtc,false,0xdef,0,,0.01\n";
         let err = BuilderLogsFetcher::parse_csv(csv).unwrap_err();
         assert!(matches!(err, BuilderLogsError::Csv(_)));
     }
@@ -201,12 +236,31 @@ mod tests {
     #[test]
     fn csv_parsing_uppercase_side() {
         // Verify uppercase "A" -> Buy and "B" -> Sell are handled correctly
-        let csv = b"time_ms,user,coin,side,px,sz,tid,oid\n\
-            1700000000000,0xabc,BTC,A,100,1,42,1001\n\
-            1700000000001,0xdef,ETH,B,200,2,43,1002\n";
+        let csv = b"time,user,coin,side,px,sz,crossed,special_trade_type,tif,is_trigger,counterparty,closed_pnl,twap_id,builder_fee\n\
+            2023-11-14T16:53:20.000Z,0xabc,BTC,A,100,1,false,,Gtc,false,0xdef,0,,0.01\n\
+            2023-11-14T16:53:21.000Z,0xdef,ETH,B,200,2,false,,Gtc,false,0xabc,0,,0.02\n";
         let fills = BuilderLogsFetcher::parse_csv(csv).unwrap();
         assert_eq!(fills.len(), 2);
         assert_eq!(fills[0].side, Side::Buy, "uppercase 'A' should be Buy");
         assert_eq!(fills[1].side, Side::Sell, "uppercase 'B' should be Sell");
+    }
+
+    #[test]
+    fn csv_parsing_minimal_columns() {
+        // Test parsing with only the required columns (extra columns marked as optional)
+        let csv = b"time,user,coin,side,px,sz\n\
+            2023-11-14T16:53:20.000Z,0xabc,BTC,buy,100.5,1.25\n";
+        let fills = BuilderLogsFetcher::parse_csv(csv).unwrap();
+        assert_eq!(fills.len(), 1);
+        assert_eq!(fills[0].px.to_canonical_string(), "100.5");
+        assert_eq!(fills[0].sz.to_canonical_string(), "1.25");
+    }
+
+    #[test]
+    fn csv_parsing_invalid_time_format_errors() {
+        let csv = b"time,user,coin,side,px,sz\n\
+            not-a-valid-time,0xabc,BTC,buy,100,1\n";
+        let err = BuilderLogsFetcher::parse_csv(csv).unwrap_err();
+        assert!(matches!(err, BuilderLogsError::Csv(_)));
     }
 }

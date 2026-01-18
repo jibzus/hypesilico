@@ -1514,6 +1514,27 @@ impl Repository {
         }))
     }
 
+    /// Get the earliest deposit timestamp for a user.
+    ///
+    /// Returns None if the user has no deposits.
+    pub async fn get_earliest_deposit_timestamp(
+        &self,
+        user: &Address,
+    ) -> Result<Option<i64>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT MIN(time_ms) as min_time
+            FROM deposits
+            WHERE user = ?
+            "#,
+        )
+        .bind(user.as_str())
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row.get::<Option<i64>, _>("min_time"))
+    }
+
     /// Upsert an equity snapshot for an exact (user, time_ms) key.
     pub async fn upsert_equity_snapshot(
         &self,

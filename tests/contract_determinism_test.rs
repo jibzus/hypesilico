@@ -811,7 +811,8 @@ async fn test_contract_health_returns_ok() {
 
     let (status, body) = request(test_app.app, "/health").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(String::from_utf8(body).unwrap(), "ok");
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "ok");
 }
 
 #[tokio::test]
@@ -820,7 +821,8 @@ async fn test_contract_ready_returns_ready() {
 
     let (status, body) = request(test_app.app, "/ready").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(String::from_utf8(body).unwrap(), "ready");
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "ready");
 }
 
 // =============================================================================

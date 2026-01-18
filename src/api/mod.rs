@@ -12,6 +12,7 @@ use crate::engine::EquityResolver;
 use crate::orchestration::orchestrator::Orchestrator;
 use axum::{routing::get, Router};
 use std::sync::Arc;
+use tower_http::cors::{Any, CorsLayer};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -40,6 +41,11 @@ impl AppState {
 }
 
 pub fn create_router(state: AppState) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     Router::new()
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
@@ -52,5 +58,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/deposits", get(deposits::get_deposits))
         .route("/v1/leaderboard", get(leaderboard::get_leaderboard))
         .route("/v1/risk", get(risk::get_risk))
+        .layer(cors)
         .with_state(state)
 }
