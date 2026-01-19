@@ -3,7 +3,7 @@
 use crate::domain::{Address, Attribution, AttributionConfidence, AttributionMode, Coin, TimeMs};
 use crate::engine::{Effect, EffectType, Lifecycle, Snapshot};
 use sqlx::Row;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::{PositionSnapshotRow, Repository};
 
@@ -299,6 +299,7 @@ impl Repository {
     /// Return the set of tainted lifecycle IDs from a provided list.
     ///
     /// Uses chunked queries to avoid SQLite's 999 parameter limit.
+    /// Results are deduplicated and returned in sorted order for stability.
     pub async fn query_tainted_lifecycle_ids(
         &self,
         lifecycle_ids: &[i64],
@@ -309,7 +310,7 @@ impl Repository {
 
         // SQLite has a 999 parameter limit; chunk to 500 for safety margin.
         const CHUNK_SIZE: usize = 500;
-        let mut out = Vec::with_capacity(lifecycle_ids.len());
+        let mut out: HashSet<i64> = HashSet::with_capacity(lifecycle_ids.len());
 
         for chunk in lifecycle_ids.chunks(CHUNK_SIZE) {
             let placeholders = vec!["?"; chunk.len()].join(",");
@@ -331,7 +332,10 @@ impl Repository {
             out.extend(rows.iter().map(|row| row.get::<i64, _>("id")));
         }
 
-        Ok(out)
+        // Convert to sorted Vec for stable ordering
+        let mut result: Vec<i64> = out.into_iter().collect();
+        result.sort_unstable();
+        Ok(result)
     }
 
     /// Insert or update fill attributions.
