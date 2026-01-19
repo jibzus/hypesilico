@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS position_snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_snapshots_user_coin_time ON position_snapshots(user, coin, time_ms);
 
+-- Index for position_snapshots JOIN on lifecycle_id
+CREATE INDEX IF NOT EXISTS idx_snapshots_lifecycle_id ON position_snapshots(lifecycle_id);
+
 -- Fill effects (flip decomposition)
 CREATE TABLE IF NOT EXISTS fill_effects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +76,9 @@ CREATE TABLE IF NOT EXISTS fill_effects (
 );
 
 CREATE INDEX IF NOT EXISTS idx_effects_fill_key ON fill_effects(fill_key);
+
+-- Index for fill_effects JOIN on lifecycle_id (PnL and leaderboard queries)
+CREATE INDEX IF NOT EXISTS idx_effects_lifecycle_id ON fill_effects(lifecycle_id);
 
 -- Deposits
 CREATE TABLE IF NOT EXISTS deposits (
