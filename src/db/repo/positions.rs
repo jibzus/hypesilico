@@ -297,6 +297,8 @@ impl Repository {
     }
 
     /// Return the set of tainted lifecycle IDs from a provided list.
+    ///
+    /// Uses chunked queries to avoid SQLite's 999 parameter limit.
     pub async fn query_tainted_lifecycle_ids(
         &self,
         lifecycle_ids: &[i64],
@@ -305,23 +307,31 @@ impl Repository {
             return Ok(Vec::new());
         }
 
-        let placeholders = vec!["?"; lifecycle_ids.len()].join(",");
-        let sql = format!(
-            r#"
-            SELECT id
-            FROM position_lifecycles
-            WHERE id IN ({}) AND is_tainted = 1
-            "#,
-            placeholders
-        );
+        // SQLite has a 999 parameter limit; chunk to 500 for safety margin.
+        const CHUNK_SIZE: usize = 500;
+        let mut out = Vec::with_capacity(lifecycle_ids.len());
 
-        let mut query = sqlx::query(&sql);
-        for id in lifecycle_ids {
-            query = query.bind(id);
+        for chunk in lifecycle_ids.chunks(CHUNK_SIZE) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                r#"
+                SELECT id
+                FROM position_lifecycles
+                WHERE id IN ({}) AND is_tainted = 1
+                "#,
+                placeholders
+            );
+
+            let mut query = sqlx::query(&sql);
+            for id in chunk {
+                query = query.bind(id);
+            }
+
+            let rows = query.fetch_all(&self.pool).await?;
+            out.extend(rows.iter().map(|row| row.get::<i64, _>("id")));
         }
 
-        let rows = query.fetch_all(&self.pool).await?;
-        Ok(rows.iter().map(|row| row.get::<i64, _>("id")).collect())
+        Ok(out)
     }
 
     /// Insert or update fill attributions.
@@ -364,6 +374,8 @@ impl Repository {
 
     /// Query attributions for a list of fill keys.
     ///
+    /// Uses chunked queries to avoid SQLite's 999 parameter limit.
+    ///
     /// # Arguments
     /// * `fill_keys` - Fill keys to query attributions for
     ///
@@ -377,26 +389,29 @@ impl Repository {
             return Ok(Vec::new());
         }
 
-        let placeholders = vec!["?"; fill_keys.len()].join(",");
-        let sql = format!(
-            r#"
-            SELECT fill_key, attributed, mode, confidence, builder
-            FROM fill_attributions
-            WHERE fill_key IN ({})
-            "#,
-            placeholders
-        );
+        // SQLite has a 999 parameter limit; chunk to 500 for safety margin.
+        const CHUNK_SIZE: usize = 500;
+        let mut out = Vec::with_capacity(fill_keys.len());
 
-        let mut query = sqlx::query(&sql);
-        for key in fill_keys {
-            query = query.bind(key);
-        }
+        for chunk in fill_keys.chunks(CHUNK_SIZE) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                r#"
+                SELECT fill_key, attributed, mode, confidence, builder
+                FROM fill_attributions
+                WHERE fill_key IN ({})
+                "#,
+                placeholders
+            );
 
-        let rows = query.fetch_all(&self.pool).await?;
+            let mut query = sqlx::query(&sql);
+            for key in chunk {
+                query = query.bind(key);
+            }
 
-        Ok(rows
-            .iter()
-            .map(|row| {
+            let rows = query.fetch_all(&self.pool).await?;
+
+            out.extend(rows.iter().map(|row| {
                 (
                     row.get::<String, _>("fill_key"),
                     row.get::<i32, _>("attributed") != 0,
@@ -404,8 +419,10 @@ impl Repository {
                     row.get::<String, _>("confidence"),
                     row.get::<Option<String>, _>("builder"),
                 )
-            })
-            .collect())
+            }));
+        }
+
+        Ok(out)
     }
 
     /// Query full attribution records for a list of fill keys.
